@@ -304,7 +304,7 @@
 
         <!-- VSO Nightly Builds -->
         <PropertyGroup>
-            <CoreRT_FeedUrl Condition="'$(CoreRT_FeedUrl)'==''">https://www.myget.org/F/dotnet-corert-nightly</CoreRT_FeedUrl>
+            <CoreRT_FeedUrl Condition="'$(CoreRT_FeedUrl)'==''">https://dotnet.myget.org/F/dotnet-corert-nightly</CoreRT_FeedUrl>
             <CoreRT_PushUrl>$(CoreRT_FeedUrl)/api/v2/package</CoreRT_PushUrl>
             <NuPkgFilesDir>$(ProductPackageDir)</NuPkgFilesDir>
             <!-- Workaround: Unix NuGet.exe doesn't like absolute paths. Fails by appending the working dir with the already absolute path. -->
