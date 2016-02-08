@@ -10,7 +10,10 @@ $SyncTime = $PstTime.ToString("HH:00:00")
 
 . "$PSScriptRoot/sync-to-time.ps1" -Time "$SyncTime"
 
-If (-Not (Test-Path "$NuGetDir\nuget.exe")) {
+If (-Not (Test-Path -Path "$RepoPath\packages")) {
+    New-Item -ItemType directory -Path "$RepoPath\packages"
+}
+If (-Not (Test-Path "$RepoPath\packages\nuget.exe")) {
     Invoke-WebRequest -UseBasicParsing "https://api.nuget.org/downloads/nuget.exe" -OutFile "$RepoPath\packages\nuget.exe"
 }
 
