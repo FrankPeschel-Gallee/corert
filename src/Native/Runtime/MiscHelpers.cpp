@@ -12,7 +12,7 @@
 #include "daccess.h"
 #include "PalRedhawkCommon.h"
 #include "PalRedhawk.h"
-#include "assert.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "holder.h"
 #include "Crst.h"
@@ -26,6 +26,8 @@
 #include "thread.h"
 #include "event.h"
 #include "threadstore.h"
+#include "threadstore.inl"
+#include "thread.inl"
 #include "gcrhinterface.h"
 #include "shash.h"
 #include "module.h"
@@ -47,40 +49,9 @@ COOP_PINVOKE_HELPER(void, RhSpinWait, (Int32 iterations))
 }
 
 // Yield the cpu to another thread ready to process, if one is available.
-COOP_PINVOKE_HELPER(UInt32_BOOL, RhYield, ())
+COOP_PINVOKE_HELPER(Boolean, RhYield, ())
 {
-    return PalSwitchToThread();
-}
-
-// Get the rarely used (optional) flags of an EEType. If they're not present 0 will be returned.
-COOP_PINVOKE_HELPER(UInt32, RhpGetEETypeRareFlags, (EEType * pEEType))
-{
-    return pEEType->get_RareFlags();
-}
-
-// For an ICastable type return a pointer to code that implements ICastable.IsInstanceOfInterface.
-COOP_PINVOKE_HELPER(UIntNative, RhpGetICastableIsInstanceOfInterfaceMethod, (EEType * pEEType))
-{
-    ASSERT(pEEType->IsICastable());
-    return (UIntNative)pEEType->get_ICastableIsInstanceOfInterfaceMethod();
-}
-
-// For an ICastable type return a pointer to code that implements ICastable.ICastableGetImplType.
-COOP_PINVOKE_HELPER(UIntNative, RhpGetICastableGetImplTypeMethod, (EEType * pEEType))
-{
-    ASSERT(pEEType->IsICastable());
-    return (UIntNative)pEEType->get_ICastableGetImplTypeMethod();
-}
-
-// Return the unboxed size of a value type.
-COOP_PINVOKE_HELPER(UInt32, RhGetValueTypeSize, (EEType * pEEType))
-{
-    ASSERT(pEEType->get_IsValueType());
-
-    // get_BaseSize returns the GC size including space for the sync block index field, the EEType* and
-    // padding for GC heap alignment. Must subtract all of these to get the size used for locals, array
-    // elements or fields of another type.
-    return pEEType->get_BaseSize() - (sizeof(ObjHeader) + sizeof(EEType*) + pEEType->get_ValueTypeFieldPadding());
+    return PalSwitchToThread() ? Boolean_true : Boolean_false;
 }
 
 // Return the DispatchMap pointer of a type
@@ -135,6 +106,9 @@ COOP_PINVOKE_HELPER(HANDLE, RhGetModuleFromPointer, (PTR_VOID pPointerVal))
 
 COOP_PINVOKE_HELPER(HANDLE, RhGetModuleFromEEType, (EEType * pEEType))
 {
+#if CORERT
+    return (HANDLE)(pEEType->GetModuleManager());
+#else
     // For dynamically created types, return the module handle that contains the template type
     if (pEEType->IsDynamicType())
         pEEType = pEEType->get_DynamicTemplateType();
@@ -149,10 +123,27 @@ COOP_PINVOKE_HELPER(HANDLE, RhGetModuleFromEEType, (EEType * pEEType))
     // We should never get here (an EEType not located in any module) so fail fast to indicate the bug.
     RhFailFast();
     return NULL;
+#endif // !CORERT
 }
 
 COOP_PINVOKE_HELPER(Boolean, RhFindBlob, (HANDLE hOsModule, UInt32 blobId, UInt8 ** ppbBlob, UInt32 * pcbBlob))
 {
+#if CORERT
+    ReadyToRunSectionType section =
+        (ReadyToRunSectionType)((UInt32)ReadyToRunSectionType::ReadonlyBlobRegionStart + blobId);
+    ASSERT(section <= ReadyToRunSectionType::ReadonlyBlobRegionEnd);
+
+    ModuleManager* pModule = (ModuleManager*)hOsModule;
+
+    int length;
+    void* pBlob;
+    pBlob = pModule->GetModuleSection(section, &length);
+
+    *ppbBlob = (UInt8*)pBlob;
+    *pcbBlob = (UInt32)length;
+
+    return pBlob != NULL;
+#else
     // Search for the Redhawk module contained by the OS module.
     FOREACH_MODULE(pModule)
     {
@@ -193,6 +184,7 @@ COOP_PINVOKE_HELPER(Boolean, RhFindBlob, (HANDLE hOsModule, UInt32 blobId, UInt8
     RhFailFast();
 
     return FALSE;
+#endif // !CORERT
 }
 
 // This helper is not called directly but is used by the implementation of RhpCheckCctor to locate the
@@ -219,16 +211,6 @@ COOP_PINVOKE_HELPER(void *, GetClasslibCCtorCheck, (void * pReturnAddress))
     return pCallback;
 }
 
-COOP_PINVOKE_HELPER(UInt8, RhpGetNullableEETypeValueOffset, (EEType * pEEType))
-{
-    return pEEType->GetNullableValueOffset();
-}
-
-COOP_PINVOKE_HELPER(EEType *, RhpGetNullableEEType, (EEType * pEEType))
-{
-    return pEEType->GetNullableType();
-}
-
 COOP_PINVOKE_HELPER(Boolean, RhpHasDispatchMap, (EEType * pEEType))
 {
     return pEEType->HasDispatchMap();
@@ -242,11 +224,6 @@ COOP_PINVOKE_HELPER(DispatchMap *, RhpGetDispatchMap, (EEType * pEEType))
 COOP_PINVOKE_HELPER(EEType *, RhpGetArrayBaseType, (EEType * pEEType))
 {
     return pEEType->GetArrayBaseType();
-}
-
-COOP_PINVOKE_HELPER(PTR_Code, RhpGetSealedVirtualSlot, (EEType * pEEType, UInt16 slot))
-{
-    return pEEType->get_SealedVirtualSlot(slot);
 }
 
 // Obtain the address of a thread static field for the current thread given the enclosing type and a field cookie
@@ -462,6 +439,65 @@ COOP_PINVOKE_HELPER(UInt8 *, RhGetCodeTarget, (UInt8 * pCodeOrg))
     return pCodeOrg;
 }
 
+// Given a pointer to code, find out if this points to a jump stub, and if so, return the address that stub jumps to
+COOP_PINVOKE_HELPER(UInt8 *, RhGetJmpStubCodeTarget, (UInt8 * pCodeOrg))
+{
+    // Search for the module containing the code
+    FOREACH_MODULE(pModule)
+    {
+        // If the code pointer doesn't point to a module's stub range,
+        // it can't be pointing to a stub
+        if (!pModule->ContainsStubAddress(pCodeOrg))
+            continue;
+
+#ifdef _TARGET_AMD64_
+        UInt8 * pCode = pCodeOrg;
+
+        // if this is a jmp stub
+        if (pCode[0] == 0xe9)
+        {
+            // relative jump - dist is relative to the point *after* the instruction
+            Int32 distToTarget = *(Int32 *)&pCode[1];
+            UInt8 * target = pCode + 5 + distToTarget;
+            return target;
+        }
+        return pCodeOrg;
+
+#elif _TARGET_X86_
+        UInt8 * pCode = pCodeOrg;
+
+        // if this is a jmp stub
+        if (pCode[0] == 0xe9)
+        {
+            // relative jump - dist is relative to the point *after* the instruction
+            Int32 distToTarget = *(Int32 *)&pCode[1];
+            UInt8 * pTarget = pCode + 5 + distToTarget;
+            return pTarget;
+        }
+        return pCodeOrg;
+
+#elif _TARGET_ARM_
+        const UInt16 THUMB_BIT = 1;
+        UInt16 * pCode = (UInt16 *)((size_t)pCodeOrg & ~THUMB_BIT);
+        // if this is a jmp stub
+        if ((pCode[0] & 0xf800) == 0xf000 && (pCode[1] & 0xd000) == 0x9000)
+        {
+            Int32 distToTarget = GetThumb2BlRel24(pCode);
+            UInt8 * pTarget = (UInt8 *)(pCode + 2) + distToTarget + THUMB_BIT;
+            return (UInt8 *)pTarget;
+        }
+#elif _TARGET_ARM64_
+        PORTABILITY_ASSERT("@TODO: FIXME:ARM64");
+#else
+#error 'Unsupported Architecture'
+#endif
+    }
+    END_FOREACH_MODULE;
+
+    return pCodeOrg;
+}
+
+
 //
 // Return true if the array slice is valid
 //
@@ -563,3 +599,38 @@ COOP_PINVOKE_HELPER(void*, RhGetUniversalTransitionThunk, ())
 {
     return (void*)RhpUniversalTransition;
 }
+
+extern CrstStatic g_CastCacheLock;
+
+EXTERN_C REDHAWK_API void __cdecl RhpAcquireCastCacheLock()
+{
+    g_CastCacheLock.Enter();
+}
+
+EXTERN_C REDHAWK_API void __cdecl RhpReleaseCastCacheLock()
+{
+    g_CastCacheLock.Leave();
+}
+
+EXTERN_C Int32 __cdecl RhpCalculateStackTraceWorker(void* pOutputBuffer, UInt32 outputBufferLength);
+
+EXTERN_C REDHAWK_API Int32 __cdecl RhpGetCurrentThreadStackTrace(void* pOutputBuffer, UInt32 outputBufferLength)
+{
+    // This must be called via p/invoke rather than RuntimeImport to make the stack crawlable.
+
+    ThreadStore::GetCurrentThread()->SetupHackPInvokeTunnel();
+
+    return RhpCalculateStackTraceWorker(pOutputBuffer, outputBufferLength);
+}
+
+#ifdef CORERT
+COOP_PINVOKE_HELPER(void*, RhpGetModuleSection, (ModuleManager* pModule, Int32 headerId, Int32* length))
+{
+    return pModule->GetModuleSection((ReadyToRunSectionType)headerId, length);
+}
+
+COOP_PINVOKE_HELPER(void*, RhpCreateModuleManager, (void* pModuleHeader))
+{
+    return ModuleManager::Create(pModuleHeader);
+}
+#endif

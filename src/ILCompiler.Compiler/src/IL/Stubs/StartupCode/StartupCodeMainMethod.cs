@@ -49,11 +49,8 @@ namespace Internal.IL.Stubs.StartupCode
         {
             ILEmitter emitter = new ILEmitter();
             ILCodeStream codeStream = emitter.NewCodeStream();
-            ILLocalVariable returnValue = emitter.NewLocal(Context.GetWellKnownType(WellKnownType.Int32));
 
             MetadataType startup = Context.GetHelperType("StartupCodeHelpers");
-            
-            codeStream.Emit(ILOpcode.call, emitter.NewToken(startup.GetKnownMethod("Initialize", null)));
 
             // Initialize command line args
             string initArgsName = (Context.Target.OperatingSystem == TargetOS.Windows)
@@ -67,22 +64,17 @@ namespace Internal.IL.Stubs.StartupCode
             // Call program Main
             if (_mainMethod.Signature.Length > 0)
             {
-                TypeDesc environ = Context.SystemModule.GetKnownType("System", "Environment");
-                codeStream.Emit(ILOpcode.call, emitter.NewToken(environ.GetKnownMethod("GetCommandLineArgs", null)));
+                codeStream.Emit(ILOpcode.call, emitter.NewToken(startup.GetKnownMethod("GetMainMethodArguments", null)));
             }
             codeStream.Emit(ILOpcode.call, emitter.NewToken(_mainMethod));
             if (_mainMethod.Signature.ReturnType.IsVoid)
             {
                 codeStream.EmitLdc(0);
             }
-            codeStream.EmitStLoc(returnValue);
 
-            codeStream.Emit(ILOpcode.call, emitter.NewToken(startup.GetKnownMethod("Shutdown", null)));
-
-            codeStream.EmitLdLoc(returnValue);
             codeStream.Emit(ILOpcode.ret);
 
-            return emitter.Link();
+            return emitter.Link(this);
         }
 
         public override MethodSignature Signature
@@ -101,6 +93,13 @@ namespace Internal.IL.Stubs.StartupCode
                 return _signature;
             }
         }
+
+        public override bool IsNativeCallable
+        {
+            get
+            {
+                return true;
+            }
+        }
     }
 }
-

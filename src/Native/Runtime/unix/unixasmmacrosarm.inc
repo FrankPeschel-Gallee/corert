@@ -32,10 +32,7 @@ C_FUNC(\Name):
         .fnstart
 .endm
 
-.macro LEAF_END_MARKED Name, Section
-        .thumb_func
-        .global C_FUNC(\Name\()_End)
-C_FUNC(\Name\()_End):
+.macro LEAF_END Name, Section
         .size \Name, .-\Name
         .fnend
 .endm
@@ -63,13 +60,13 @@ C_FUNC(\Name\()_End):
 .endm
 
 .macro alloc_stack Size
-        sub sp, sp, \Size
-        .pad #\Size
+        sub sp, sp, (\Size)
+        .pad #(\Size)
 .endm
 
 .macro free_stack Size
-        add sp, sp, \Size
-        .pad #-\Size
+        add sp, sp, (\Size)
+        .pad #-(\Size)
 .endm
 
 .macro POP_CALLEE_SAVED_REGISTERS

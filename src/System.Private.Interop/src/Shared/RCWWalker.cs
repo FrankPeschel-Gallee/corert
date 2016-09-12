@@ -417,7 +417,14 @@ namespace System.Runtime.InteropServices
         {
             try
             {
+                void* pUnknown = (void *)__IntPtr__pUnknown;
+                if (pUnknown == null)
+                    return Interop.COM.E_POINTER;
+
                 __com_ICCW** ppNewReference = (__com_ICCW**)__IntPtr__ppNewReference;
+                if (ppNewReference == null)
+                    return Interop.COM.E_POINTER;
+
                 object comObj = null;
 #if ENABLE_WINRT
             //
@@ -427,8 +434,8 @@ namespace System.Runtime.InteropServices
             //
              comObj = McgComHelpers.ComInterfaceToComObject(
                 __IntPtr__pUnknown,
-                McgModuleManager.IUnknown,
-                McgClassInfo.Null,
+                InternalTypes.IUnknown,
+                default(RuntimeTypeHandle),
                 ContextCookie.Default,                                  // No restriction on context
                 McgComHelpers.CreateComObjectFlags.IsWinRTObject
             );
@@ -465,14 +472,13 @@ namespace System.Runtime.InteropServices
             // but we don't have it in rhtestcl X86 because StdCallCOOP is not available in RHTESTCL
             *ppNewReference = (__com_ICCW*)McgMarshal.ManagedObjectToComInterface(
                 customPropertyProviderProxy,
-                McgModuleManager.IInspectable
+                InternalTypes.IInspectable
             );
 #else // X86 && RHTESTCL
             // The contract is we must hand out ICCW (even though Jupiter probably doesn't care)
             *ppNewReference = (__com_ICCW*)McgMarshal.ManagedObjectToComInterface(
                 customPropertyProviderProxy,
-                McgModuleManager.ICCW
-
+                InternalTypes.ICCW
             );
 #endif //
 
@@ -1190,7 +1196,6 @@ namespace System.Runtime.InteropServices
         internal const int DefaultCapacity = 100;       // Default initial capacity of this list
         internal const int ShrinkHintThreshold = 5;     // The number of hints we've seen before we really
                                                         // shrink the list
-        internal const int HEAP_ZERO_MEMORY = 0x8;      // Flag to zero memory
 
         /// <summary>
         /// Reset the list of handles to be used by the current GC
@@ -1211,7 +1216,7 @@ namespace System.Runtime.InteropServices
                 //
                 m_capacity = DefaultCapacity;
                 uint newCapacity = (uint)(sizeof(IntPtr) * m_capacity);
-                m_pHandles = (IntPtr*)ExternalInterop.MemAlloc(new UIntPtr(newCapacity) , HEAP_ZERO_MEMORY);
+                m_pHandles = (IntPtr*)ExternalInterop.MemAllocWithZeroInitializeNoThrow(new UIntPtr(newCapacity));
 
                 if (m_pHandles == null)
                     return false;
@@ -1304,9 +1309,9 @@ namespace System.Runtime.InteropServices
             int newCapacity = m_capacity * 2;
 
             // NOTE: Call must be used instead of StdCall to avoid deadlock
-            IntPtr* pNewHandles = (IntPtr*)ExternalInterop.MemReAlloc((IntPtr)m_pHandles,
-                                                                      new UIntPtr( (uint) (sizeof(IntPtr) * newCapacity)),
-                                                                      HEAP_ZERO_MEMORY);
+            IntPtr* pNewHandles = (IntPtr*)ExternalInterop.MemReAllocWithZeroInitializeNoThrow((IntPtr)m_pHandles,
+                                                                      new UIntPtr( (uint) (sizeof(IntPtr) * m_capacity)),
+                                                                      new UIntPtr( (uint) (sizeof(IntPtr) * newCapacity)));
 
             if (pNewHandles == null)
                 return false;
@@ -1347,8 +1352,9 @@ namespace System.Runtime.InteropServices
             // If this fails, we don't really care (very unlikely to fail, though)
             // NOTE: Call must be used instead of StdCall to avoid deadlock
             //
-            IntPtr* pNewHandles = (IntPtr*)ExternalInterop.MemReAlloc((IntPtr)m_pHandles, new UIntPtr((uint)(sizeof(IntPtr) * newCapacity) ) , HEAP_ZERO_MEMORY);
-
+            IntPtr* pNewHandles = (IntPtr*)ExternalInterop.MemReAllocWithZeroInitializeNoThrow((IntPtr) m_pHandles, 
+                                                                        new UIntPtr((uint)(sizeof(IntPtr) * m_capacity)),
+                                                                        new UIntPtr((uint)(sizeof(IntPtr) * newCapacity)));
             if (pNewHandles == null)
                 return false;
 

@@ -19,11 +19,13 @@
 #include "gcenv.structs.h"
 #include "gcenv.os.h"
 #include "holder.h"
+#include "HardwareExceptions.h"
 
 #include <unistd.h>
 #include <sched.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <sys/syscall.h>
 #include <dlfcn.h>
 #include <dirent.h>
 #include <string.h>
@@ -32,6 +34,14 @@
 #include <fcntl.h>
 #include <sys/time.h>
 #include <cstdarg>
+
+#if HAVE_PTHREAD_GETTHREADID_NP
+#include <pthread_np.h>
+#endif
+
+#if HAVE_LWP_SELF
+#include <lwp.h>
+#endif
 
 #if !HAVE_SYSCONF && !HAVE_SYSCTL
 #error Neither sysconf nor sysctl is present on the current system
@@ -70,10 +80,6 @@ using std::nullptr_t;
 
 #include "gcenv.structs.h"
 
-#ifdef CORERT // @TODO: Collisions between assert.h headers
-#define assert(expr) ASSERT(expr)
-#endif
-
 #define REDHAWK_PALEXPORT extern "C"
 #define REDHAWK_PALAPI
 
@@ -100,14 +106,24 @@ using std::nullptr_t;
     } \
     while(0)
 
+typedef union _LARGE_INTEGER {
+    struct {
+#if BIGENDIAN
+        int32_t HighPart;
+        uint32_t LowPart;
+#else
+        uint32_t LowPart;
+        int32_t HighPart;
+#endif
+    } u;
+    int64_t QuadPart;
+} LARGE_INTEGER, *PLARGE_INTEGER;
+
 typedef void * LPSECURITY_ATTRIBUTES;
 typedef void* PCONTEXT;
 typedef void* PEXCEPTION_RECORD;
-typedef void* PEXCEPTION_POINTERS;
 
-typedef Int32 (__stdcall *PVECTORED_EXCEPTION_HANDLER)(
-    PEXCEPTION_POINTERS ExceptionInfo
-    );
+#define INVALID_HANDLE_VALUE    ((HANDLE)(IntNative)-1)
 
 #define PAGE_NOACCESS           0x01
 #define PAGE_READWRITE          0x04
@@ -146,15 +162,50 @@ static pthread_key_t g_threadKey;
 extern bool PalQueryProcessorTopology();
 bool InitializeFlushProcessWriteBuffers();
 
+extern "C" void RaiseFailFastException(PEXCEPTION_RECORD arg1, PCONTEXT arg2, UInt32 arg3)
+{
+    // Abort aborts the process and causes creation of a crash dump
+    abort();
+}
+
 void TimeSpecAdd(timespec* time, uint32_t milliseconds)
 {
-    time->tv_nsec += milliseconds * tccMilliSecondsToNanoSeconds;
-    if (time->tv_nsec > tccSecondsToNanoSeconds)
+    uint64_t nsec = time->tv_nsec + (uint64_t)milliseconds * tccMilliSecondsToNanoSeconds;
+    if (nsec >= tccSecondsToNanoSeconds)
     {
-        time->tv_sec += (time->tv_nsec - tccSecondsToNanoSeconds) / tccSecondsToNanoSeconds;
-        time->tv_nsec %= tccSecondsToNanoSeconds;
+        time->tv_sec += nsec / tccSecondsToNanoSeconds;
+        nsec %= tccSecondsToNanoSeconds;
     }
+
+    time->tv_nsec = nsec;
 }
+
+#ifdef __APPLE__
+// Convert nanoseconds to the timespec structure
+// Parameters:
+//  nanoseconds - time in nanoseconds to convert
+//  t           - the target timespec structure
+void NanosecondsToTimespec(uint64_t nanoseconds, timespec* t)
+{
+    t->tv_sec = nanoseconds / tccSecondsToNanoSeconds;
+    t->tv_nsec = nanoseconds % tccSecondsToNanoSeconds;
+}
+#endif // __APPLE__
+
+void ReleaseCondAttr(pthread_condattr_t* condAttr)
+{
+    int st = pthread_condattr_destroy(condAttr);
+    ASSERT_MSG(st == 0, "Failed to destroy pthread_condattr_t object");
+}
+
+class PthreadCondAttrHolder : public Wrapper<pthread_condattr_t*, DoNothing, ReleaseCondAttr, nullptr>
+{
+public:
+    PthreadCondAttrHolder(pthread_condattr_t* attrs)
+    : Wrapper<pthread_condattr_t*, DoNothing, ReleaseCondAttr, nullptr>(attrs)
+    {
+    }
+};
 
 class UnixEvent
 {
@@ -162,70 +213,100 @@ class UnixEvent
     pthread_mutex_t m_mutex;
     bool m_manualReset;
     bool m_state;
-
-    void Update(bool state)
-    {
-        pthread_mutex_lock(&m_mutex);
-        m_state = state;
-        // Unblock all threads waiting for the condition variable
-        pthread_cond_broadcast(&m_condition);
-        pthread_mutex_unlock(&m_mutex);
-    }
+    bool m_isValid;
 
 public:
 
     UnixEvent(bool manualReset, bool initialState)
     : m_manualReset(manualReset),
-      m_state(initialState)
+      m_state(initialState),
+      m_isValid(false)
     {
-        int st = pthread_mutex_init(&m_mutex, NULL);
-        ASSERT(st == NULL);
-
-        pthread_condattr_t attrs;
-        st = pthread_condattr_init(&attrs);
-        ASSERT(st == NULL);
-
-#if HAVE_CLOCK_MONOTONIC
-        // Ensure that the pthread_cond_timedwait will use CLOCK_MONOTONIC
-        st = pthread_condattr_setclock(&attrs, CLOCK_MONOTONIC);
-        ASSERT(st == NULL);
-#endif // HAVE_CLOCK_MONOTONIC
-
-        st = pthread_cond_init(&m_condition, &attrs);
-        ASSERT(st == NULL);
-
-        st = pthread_condattr_destroy(&attrs);
-        ASSERT(st == NULL);
     }
 
-    ~UnixEvent()
+    bool Initialize()
     {
-        int st = pthread_mutex_destroy(&m_mutex);
-        ASSERT(st == NULL);
+        pthread_condattr_t attrs;
+        int st = pthread_condattr_init(&attrs);
+        if (st != 0)
+        {
+            ASSERT_UNCONDITIONALLY("Failed to initialize UnixEvent condition attribute");
+            return false;
+        }
 
-        st = pthread_cond_destroy(&m_condition);
-        ASSERT(st == NULL);
+        PthreadCondAttrHolder attrsHolder(&attrs);
+
+    #if HAVE_CLOCK_MONOTONIC
+        // Ensure that the pthread_cond_timedwait will use CLOCK_MONOTONIC
+        st = pthread_condattr_setclock(&attrs, CLOCK_MONOTONIC);
+        if (st != 0)
+        {
+            ASSERT_UNCONDITIONALLY("Failed to set UnixEvent condition variable wait clock");
+            return false;
+        }
+    #endif // HAVE_CLOCK_MONOTONIC
+
+        st = pthread_mutex_init(&m_mutex, NULL);
+        if (st != 0)
+        {
+            ASSERT_UNCONDITIONALLY("Failed to initialize UnixEvent mutex");
+            return false;
+        }
+
+        st = pthread_cond_init(&m_condition, &attrs);
+        if (st != 0)
+        {
+            ASSERT_UNCONDITIONALLY("Failed to initialize UnixEvent condition variable");
+
+            st = pthread_mutex_destroy(&m_mutex);
+            ASSERT_MSG(st == 0, "Failed to destroy UnixEvent mutex");
+            return false;
+        }
+
+        m_isValid = true;
+
+        return true;
+    }
+
+    bool Destroy()
+    {
+        bool success = true;
+
+        if (m_isValid)
+        {
+            int st = pthread_mutex_destroy(&m_mutex);
+            ASSERT_MSG(st == 0, "Failed to destroy UnixEvent mutex");
+            success = success && (st == 0);
+
+            st = pthread_cond_destroy(&m_condition);
+            ASSERT_MSG(st == 0, "Failed to destroy UnixEvent condition variable");
+            success = success && (st == 0);
+        }
+
+        return success;
     }
 
     uint32_t Wait(uint32_t milliseconds)
     {
         timespec endTime;
-
+#ifdef __APPLE__
+        uint64_t endMachTime;
+#endif
         if (milliseconds != INFINITE)
         {
 #if HAVE_CLOCK_MONOTONIC
             clock_gettime(CLOCK_MONOTONIC, &endTime);
             TimeSpecAdd(&endTime, milliseconds);
 #else // HAVE_CLOCK_MONOTONIC
-            // TODO: fix this. The time of day can be changed by the user and then the timeout
-            // would change. So we will need to use pthread_cond_timedwait_relative_np and
-            // update the relative time each time pthread_cond_timedwait gets waked.
-            // on OSX and other systems that don't support the monotonic clock
-            timeval now;
-            gettimeofday(&now, NULL);
-            endTime.tv_sec = now.tv_sec;
-            endTime.tv_nsec = now.tv_usec * tccMicroSecondsToNanoSeconds;
-            TimeSpecAdd(&endTime, milliseconds);
+
+#ifdef __APPLE__
+            uint64_t nanoseconds = (uint64_t)milliseconds * tccMilliSecondsToNanoSeconds;
+            NanosecondsToTimespec(nanoseconds, &endTime);
+            endMachTime =  mach_absolute_time() + nanoseconds * s_TimebaseInfo.denom / s_TimebaseInfo.numer;
+#else // __APPLE__
+#error Cannot perform reliable timed wait for pthread condition on this platform
+#endif // __APPLE__
+
 #endif // HAVE_CLOCK_MONOTONIC
         }
 
@@ -240,7 +321,32 @@ public:
             }
             else
             {
+#ifdef __APPLE__
+                // Since OSX doesn't support CLOCK_MONOTONIC, we use relative variant of the 
+                // timed wait and we need to handle spurious wakeups properly.
+                st = pthread_cond_timedwait_relative_np(&m_condition, &m_mutex, &endTime);
+                if ((st == 0) && !m_state)
+                {
+                    uint64_t machTime = mach_absolute_time();
+                    if (machTime < endMachTime)
+                    {
+                        // The wake up was spurious, recalculate the relative endTime
+                        uint64_t remainingNanoseconds = (endMachTime - machTime) * s_TimebaseInfo.numer / s_TimebaseInfo.denom;
+                        NanosecondsToTimespec(remainingNanoseconds, &endTime);
+                    }
+                    else
+                    {
+                        // Although the timed wait didn't report a timeout, time calculated from the
+                        // mach time shows we have already reached the end time. It can happen if
+                        // the wait was spuriously woken up right before the timeout.
+                        st = ETIMEDOUT;
+                    }
+                }
+#else // __APPLE__ 
                 st = pthread_cond_timedwait(&m_condition, &m_mutex, &endTime);
+#endif // __APPLE__
+                // Verify that if the wait timed out, the event was not set
+                ASSERT((st != ETIMEDOUT) || !m_state);
             }
 
             if (st != 0)
@@ -248,8 +354,14 @@ public:
                 // wait failed or timed out
                 break;
             }
-
         }
+
+        if ((st == 0) && !m_manualReset)
+        {
+            // Clear the state for auto-reset events so that only one waiter gets released
+            m_state = false;
+        }
+
         pthread_mutex_unlock(&m_mutex);
 
         uint32_t waitStatus;
@@ -272,16 +384,36 @@ public:
 
     void Set()
     {
-        Update(true);
+        pthread_mutex_lock(&m_mutex);
+        m_state = true;
+        pthread_mutex_unlock(&m_mutex);
+
+        // Unblock all threads waiting for the condition variable
+        pthread_cond_broadcast(&m_condition);
     }
 
     void Reset()
     {
-        Update(false);
+        pthread_mutex_lock(&m_mutex);
+        m_state = false;
+        pthread_mutex_unlock(&m_mutex);
     }
 };
 
-typedef UnixHandle<UnixHandleType::Event, UnixEvent> EventUnixHandle;
+class EventUnixHandle : public UnixHandle<UnixHandleType::Event, UnixEvent>
+{
+public:
+    EventUnixHandle(UnixEvent event)
+    : UnixHandle<UnixHandleType::Event, UnixEvent>(event)
+    {
+    }
+
+    virtual bool Destroy()
+    {
+        return m_object.Destroy();
+    }
+};
+
 typedef UnixHandle<UnixHandleType::Thread, pthread_t> ThreadUnixHandle;
 
 // Destructor of the thread local object represented by the g_threadKey,
@@ -315,6 +447,11 @@ REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalInit()
         return false;
     }
 
+    if (!InitializeHardwareExceptionHandling())
+    {
+        return false;
+    }
+
     int status = pthread_key_create(&g_threadKey, TlsObjectDestructor);
     if (status != 0)
     {
@@ -328,12 +465,6 @@ REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalInit()
 REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalHasCapability(PalCapability capability)
 {
     return (g_dwPALCapabilities & (uint32_t)capability) == (uint32_t)capability;
-}
-
-extern "C" void RaiseFailFastException(PEXCEPTION_RECORD arg1, PCONTEXT arg2, UInt32 arg3)
-{
-    // Abort aborts the process and causes creation of a crash dump
-    abort();
 }
 
 // Attach thread to PAL. 
@@ -432,16 +563,36 @@ REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI __stdcall PalSwitchToThread()
 
 extern "C" UInt32_BOOL CloseHandle(HANDLE handle)
 {
+    if ((handle == NULL) || (handle == INVALID_HANDLE_VALUE))
+    {
+        return UInt32_FALSE;
+    }
+
     UnixHandleBase* handleBase = (UnixHandleBase*)handle;
+
+    bool success = handleBase->Destroy();
 
     delete handleBase;
 
-    return UInt32_TRUE;
+    return success ? UInt32_TRUE : UInt32_FALSE;
 }
 
 REDHAWK_PALEXPORT HANDLE REDHAWK_PALAPI PalCreateEventW(_In_opt_ LPSECURITY_ATTRIBUTES pEventAttributes, UInt32_BOOL manualReset, UInt32_BOOL initialState, _In_opt_z_ const wchar_t* pName)
 {
-    return new (nothrow) EventUnixHandle(UnixEvent(manualReset, initialState));
+    UnixEvent event = UnixEvent(manualReset, initialState);
+    if (!event.Initialize())
+    {
+        return INVALID_HANDLE_VALUE;
+    }
+
+    EventUnixHandle* handle = new (nothrow) EventUnixHandle(event);
+
+    if (handle == NULL)
+    {
+        return INVALID_HANDLE_VALUE;
+    }
+
+    return handle;
 }
 
 typedef UInt32(__stdcall *BackgroundCallback)(_In_opt_ void* pCallbackContext);
@@ -495,7 +646,7 @@ REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalStartFinalizerThread(_In_ BackgroundCal
 // to return monotonically increasing counts and avoid being affected by changes
 // to the system clock (either due to drift or due to explicit changes to system
 // time).
-REDHAWK_PALEXPORT UInt64 REDHAWK_PALAPI GetTickCount64()
+REDHAWK_PALEXPORT UInt64 REDHAWK_PALAPI PalGetTickCount64()
 {
     UInt64 retval = 0;
 
@@ -558,9 +709,9 @@ REDHAWK_PALEXPORT UInt64 REDHAWK_PALAPI GetTickCount64()
     return retval;
 }
 
-REDHAWK_PALEXPORT uint32_t REDHAWK_PALAPI PalGetTickCount()
+REDHAWK_PALEXPORT UInt32 REDHAWK_PALAPI PalGetTickCount()
 {
-    return (uint32_t)GetTickCount64();
+    return (UInt32)PalGetTickCount64();
 }
 
 REDHAWK_PALEXPORT HANDLE REDHAWK_PALAPI PalGetModuleHandleFromPointer(_In_ void* pointer)
@@ -576,18 +727,12 @@ REDHAWK_PALEXPORT HANDLE REDHAWK_PALAPI PalGetModuleHandleFromPointer(_In_ void*
     return moduleHandle;
 }
 
-REDHAWK_PALEXPORT void* REDHAWK_PALAPI PalAddVectoredExceptionHandler(uint32_t firstHandler, _In_ PVECTORED_EXCEPTION_HANDLER vectoredHandler)
-{
-    // UNIXTODO: Implement this function
-    return NULL;
-}
-
 bool QueryCacheSize()
 {
     bool success = true;
     g_cbLargestOnDieCache = 0;
 
-#ifdef __LINUX__
+#ifdef __linux__
     DIR* cpuDir = opendir("/sys/devices/system/cpu");
     if (cpuDir == nullptr)
     {
@@ -670,7 +815,7 @@ bool QueryCacheSize()
     }
 #else
 #error Don't know how to get cache size on this platform
-#endif // __LINUX__
+#endif // __linux__
 
     // TODO: implement adjusted cache size
     g_cbLargestOnDieCacheAdjusted = g_cbLargestOnDieCache;
@@ -803,9 +948,9 @@ REDHAWK_PALEXPORT _Ret_maybenull_ _Post_writable_byte_size_(size) void* REDHAWK_
 
 REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI PalVirtualFree(_In_ void* pAddress, size_t size, uint32_t freeType)
 {
-    assert(((freeType & MEM_RELEASE) != MEM_RELEASE) || size == 0);
-    assert((freeType & (MEM_RELEASE | MEM_DECOMMIT)) != (MEM_RELEASE | MEM_DECOMMIT));
-    assert(freeType != 0);
+    ASSERT(((freeType & MEM_RELEASE) != MEM_RELEASE) || size == 0);
+    ASSERT((freeType & (MEM_RELEASE | MEM_DECOMMIT)) != (MEM_RELEASE | MEM_DECOMMIT));
+    ASSERT(freeType != 0);
 
     // UNIXTODO: Implement this function
     return UInt32_TRUE;
@@ -941,7 +1086,8 @@ extern "C" UInt32 GetEnvironmentVariableA(const char * name, char * buffer, UInt
 
 extern "C" UInt16 RtlCaptureStackBackTrace(UInt32 arg1, UInt32 arg2, void* arg3, UInt32* arg4)
 {
-    PORTABILITY_ASSERT("UNIXTODO: Implement this function");
+    // UNIXTODO: Implement this function
+    return 0;
 }
 
 extern "C" HANDLE GetProcessHeap()
@@ -999,14 +1145,6 @@ extern "C" void _mm_pause()
 extern "C" Int32 _stricmp(const char *string1, const char *string2)
 {
     return strcasecmp(string1, string2);
-}
-
-// Given the OS handle of a loaded module, compute the upper and lower virtual address bounds (inclusive).
-REDHAWK_PALEXPORT void REDHAWK_PALAPI PalGetModuleBounds(HANDLE hOsHandle, _Out_ UInt8 ** ppLowerBound, _Out_ UInt8 ** ppUpperBound)
-{
-    // The module handle is equal to the module base address
-    *ppLowerBound = (UInt8*)hOsHandle;
-    PORTABILITY_ASSERT("UNIXTODO: Implement this function");
 }
 
 REDHAWK_PALEXPORT Int32 PalGetProcessCpuCount()
@@ -1089,20 +1227,31 @@ REDHAWK_PALEXPORT bool PalGetMaximumStackBounds(_Out_ void** ppStackLowOut, _Out
     return true;
 }
 
+extern "C" int main(int argc, char** argv);
+
 // retrieves the full path to the specified module, if moduleBase is NULL retreieves the full path to the
 // executable module of the current process.
 //
 // Return value:  number of characters in name string
 //
-REDHAWK_PALEXPORT Int32 PalGetModuleFileName(_Out_ wchar_t** pModuleNameOut, HANDLE moduleBase)
+REDHAWK_PALEXPORT Int32 PalGetModuleFileName(_Out_ const TCHAR** pModuleNameOut, HANDLE moduleBase)
 {
-    // TODO: this function has a signature that expects the module name to be stored somewhere.
-    // We should change the signature to actually copy out the module name.
-    // Or get rid of this function (it is used by RHConfig to find the config file and the
-    // profiling to generate the .profile file name.
-    // UNIXTODO: Implement this function!
-    *pModuleNameOut = NULL;
-    return 0;
+    if (moduleBase == NULL)
+    {
+        // Get an address of the "main" function, which causes the dladdr to return
+        // path of the main executable
+        moduleBase = (HANDLE)&main;
+    }
+
+    Dl_info dl;
+    if (dladdr(moduleBase, &dl) == 0)
+    {
+        *pModuleNameOut = NULL;
+        return 0;
+    }
+
+    *pModuleNameOut = dl.dli_fname;
+    return strlen(dl.dli_fname);
 }
 
 void PalDebugBreak()
@@ -1216,10 +1365,22 @@ extern "C" UInt32_BOOL QueryPerformanceFrequency(LARGE_INTEGER *lpFrequency)
     return UInt32_TRUE;
 }
 
-extern "C" uint32_t GetCurrentThreadId()
+extern "C" UInt64 PalGetCurrentThreadIdForLogging()
 {
-    // UNIXTODO: Implement
-    return 1;
+#if defined(__linux__)
+    return (uint64_t)syscall(SYS_gettid);
+#elif defined(__APPLE__)
+    uint64_t tid;
+    pthread_threadid_np(pthread_self(), &tid);
+    return (uint64_t)tid;
+#elif HAVE_PTHREAD_GETTHREADID_NP
+    return (uint64_t)pthread_getthreadid_np();
+#elif HAVE_LWP_SELF
+    return (uint64_t)_lwp_self();
+#else
+    // Fallback in case we don't know how to get integer thread id on the current platform
+    return (uint64_t)pthread_self();
+#endif
 }
 
 extern "C" UInt32_BOOL WriteFile(
@@ -1267,9 +1428,9 @@ void GCToOSInterface::Shutdown()
 // current platform. It is indended for logging purposes only.
 // Return:
 //  Numeric id of the current thread or 0 if the 
-uint32_t GCToOSInterface::GetCurrentThreadIdForLogging()
+uint64_t GCToOSInterface::GetCurrentThreadIdForLogging()
 {
-    return ::GetCurrentThreadId();
+    return PalGetCurrentThreadIdForLogging();
 }
 
 // Get id of the process
@@ -1495,32 +1656,39 @@ uint32_t GCToOSInterface::GetCurrentProcessCpuCount()
     return ::PalGetProcessCpuCount();
 }
 
-// Get global memory status
-// Parameters:
-//  ms - pointer to the structure that will be filled in with the memory status
-void GCToOSInterface::GetMemoryStatus(GCMemoryStatus* ms)
+// Return the size of the user-mode portion of the virtual address space of this process.
+// Return:
+//  non zero if it has succeeded, 0 if it has failed
+size_t GCToOSInterface::GetVirtualMemoryLimit()
 {
-    ms->dwMemoryLoad = 0;
-    ms->ullTotalPhys = 0;
-    ms->ullAvailPhys = 0;
-    ms->ullTotalPageFile = 0;
-    ms->ullAvailPageFile = 0;
-    ms->ullTotalVirtual = 0;
-    ms->ullAvailVirtual = 0;
+#ifdef BIT64
+    // There is no API to get the total virtual address space size on
+    // Unix, so we use a constant value representing 128TB, which is
+    // the approximate size of total user virtual address space on
+    // the currently supported Unix systems.
+    static const uint64_t _128TB = (1ull << 47);
+    return _128TB;
+#else
+    return (size_t)-1;
+#endif
+}
 
-    UInt32_BOOL fRetVal = UInt32_FALSE;
+// Get the physical memory that this process can use.
+// Return:
+//  non zero if it has succeeded, 0 if it has failed
+// Remarks:
+//  If a process runs with a restricted memory limit, it returns the limit. If there's no limit 
+//  specified, it returns amount of actual physical memory.
+uint64_t GCToOSInterface::GetPhysicalMemoryLimit()
+{
+    int64_t physical_memory = 0;
 
     // Get the physical memory size
 #if HAVE_SYSCONF && HAVE__SC_PHYS_PAGES
-    int64_t physical_memory;
-
     // Get the Physical memory size
-    physical_memory = sysconf( _SC_PHYS_PAGES ) * sysconf( _SC_PAGE_SIZE );
-    ms->ullTotalPhys = (uint64_t)physical_memory;
-    fRetVal = UInt32_TRUE;
+    physical_memory = sysconf(_SC_PHYS_PAGES) * sysconf(_SC_PAGE_SIZE);
 #elif HAVE_SYSCTL
     int mib[2];
-    int64_t physical_memory;
     size_t length;
 
     // Get the Physical memory size
@@ -1532,54 +1700,61 @@ void GCToOSInterface::GetMemoryStatus(GCMemoryStatus* ms)
     {
         ASSERT_UNCONDITIONALLY("sysctl failed for HW_MEMSIZE\n");
     }
-    else
-    {
-        ms->ullTotalPhys = (uint64_t)physical_memory;
-        fRetVal = UInt32_TRUE;
-    }
 #elif // HAVE_SYSINFO
     // TODO: implement getting memory details via sysinfo. On Linux, it provides swap file details that
     // we can use to fill in the xxxPageFile members.
 
 #endif // HAVE_SYSCONF
 
-    // Get the physical memory in use - from it, we can get the physical memory available.
-    // We do this only when we have the total physical memory available.
-    if (ms->ullTotalPhys > 0)
+    return physical_memory;
+}
+
+// Get global memory status
+// Parameters:
+//  ms - pointer to the structure that will be filled in with the memory status
+void GCToOSInterface::GetMemoryStatus(uint32_t* memory_load, uint64_t* available_physical, uint64_t* available_page_file)
+{
+    if (memory_load != nullptr || available_physical != nullptr)
     {
-#ifndef __APPLE__
-        ms->ullAvailPhys = sysconf(SYSCONF_PAGES) * sysconf(_SC_PAGE_SIZE);
-        int64_t used_memory = ms->ullTotalPhys - ms->ullAvailPhys;
-        ms->dwMemoryLoad = (uint32_t)((used_memory * 100) / ms->ullTotalPhys);
-#else
-        vm_size_t page_size;
-        mach_port_t mach_port;
-        mach_msg_type_number_t count;
-        vm_statistics_data_t vm_stats;
-        mach_port = mach_host_self();
-        count = sizeof(vm_stats) / sizeof(natural_t);
-        if (KERN_SUCCESS == host_page_size(mach_port, &page_size))
+        uint64_t total = GetPhysicalMemoryLimit();
+
+        uint64_t available = 0;
+        uint32_t load = 0;
+
+        // Get the physical memory in use - from it, we can get the physical memory available.
+        // We do this only when we have the total physical memory available.
+        if (total > 0)
         {
-            if (KERN_SUCCESS == host_statistics(mach_port, HOST_VM_INFO, (host_info_t)&vm_stats, &count))
+#ifndef __APPLE__
+            available = sysconf(SYSCONF_PAGES) * sysconf(_SC_PAGE_SIZE);
+            uint64_t used = total - available;
+            load = (uint32_t)((used * 100) / total);
+#else
+            mach_port_t mach_port = mach_host_self();
+            vm_size_t page_size;
+            if (KERN_SUCCESS == host_page_size(mach_port, &page_size))
             {
-                ms->ullAvailPhys = (int64_t)vm_stats.free_count * (int64_t)page_size;
-                int64_t used_memory = ((int64_t)vm_stats.active_count + (int64_t)vm_stats.inactive_count + (int64_t)vm_stats.wire_count) *  (int64_t)page_size;
-                ms->dwMemoryLoad = (uint32_t)((used_memory * 100) / ms->ullTotalPhys);
+                vm_statistics_data_t vm_stats;
+                mach_msg_type_number_t count = sizeof(vm_stats) / sizeof(natural_t);
+                if (KERN_SUCCESS == host_statistics(mach_port, HOST_VM_INFO, (host_info_t)&vm_stats, &count))
+                {
+                    available = (uint64_t)vm_stats.free_count * (uint64_t)page_size;
+                    uint64_t used = ((uint64_t)vm_stats.active_count + (uint64_t)vm_stats.inactive_count + (uint64_t)vm_stats.wire_count) *  (uint64_t)page_size;
+                    load = (uint32_t)((used * 100) / total);
+                }
             }
-        }
-        mach_port_deallocate(mach_task_self(), mach_port);
+            mach_port_deallocate(mach_task_self(), mach_port);
 #endif // __APPLE__
+        }
+
+        if (memory_load != nullptr)
+            *memory_load = load;
+        if (available_physical != nullptr)
+            *available_physical = available;
     }
 
-    // There is no API to get the total virtual address space size on
-    // Unix, so we use a constant value representing 128TB, which is
-    // the approximate size of total user virtual address space on
-    // the currently supported Unix systems.
-    static const uint64_t _128TB = (1ull << 47);
-    ms->ullTotalVirtual = _128TB;
-    ms->ullAvailVirtual = ms->ullAvailPhys;
-
-    // UNIXTODO: failfast for !fRetVal?
+    if (available_page_file != nullptr)
+        *available_page_file = 0;
 }
 
 // Get a high precision performance counter

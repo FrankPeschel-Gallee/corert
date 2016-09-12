@@ -7,28 +7,56 @@ using System;
 namespace Internal.Runtime.CompilerHelpers
 {
     /// <summary>
-    /// These methods are used to throw exceptions from generated code.
+    /// These methods are used to throw exceptions from generated code. The type and methods
+    /// need to be public as they constitute a public contract with the .NET Native toolchain.
     /// </summary>
-    internal static class ThrowHelpers
+    [System.Runtime.CompilerServices.DependencyReductionRoot] /* keep rooted as code gen may add references to these */
+    public static class ThrowHelpers
     {
-        private static void ThrowOverflowException()
+        public static void ThrowOverflowException()
+        {
+            throw new OverflowException();
+        }
+
+        public static void ThrowIndexOutOfRangeException()
         {
             throw new IndexOutOfRangeException();
         }
 
-        private static void ThrowIndexOutOfRangeException()
+        public static void ThrowNullReferenceException()
         {
-            throw new IndexOutOfRangeException();
+            throw new NullReferenceException();
         }
 
-        private static void ThrowNullReferenceException()
+        public static void ThrowDivideByZeroException()
         {
-            throw new IndexOutOfRangeException();
+            throw new DivideByZeroException();
         }
 
-        private static void ThrowDivideByZeroException()
+        public static void ThrowArrayTypeMismatchException()
         {
-            throw new IndexOutOfRangeException();
+            throw new ArrayTypeMismatchException();
         }
+
+        public static void ThrowPlatformNotSupportedException()
+        {
+            throw new PlatformNotSupportedException();
+        }
+
+        public static void ThrowTypeLoadException()
+        {
+            throw new TypeLoadException();
+        }
+
+        public static void ThrowArgumentException()
+        {
+            throw new ArgumentException();
+        }
+
+        public static void ThrowArgumentOutOfRangeException()
+        {
+            throw new ArgumentOutOfRangeException();
+        }
+
     }
 }

@@ -19,6 +19,15 @@ namespace Internal.TypeSystem
             _instantiatedType = instantiatedType;
         }
 
+        // This constructor is a performance optimization - it allows supplying the hash code if it has already
+        // been computed prior to the allocation of this type. The supplied hash code still has to match the
+        // hash code this type would compute on it's own (and we assert to enforce that).
+        internal MethodForInstantiatedType(MethodDesc typicalMethodDef, InstantiatedType instantiatedType, int hashcode)
+            : this(typicalMethodDef, instantiatedType)
+        {
+            SetHashCode(hashcode);
+        }
+
         public override TypeSystemContext Context
         {
             get
@@ -89,6 +98,14 @@ namespace Internal.TypeSystem
             get
             {
                 return _typicalMethodDef.IsAbstract;
+            }
+        }
+
+        public override bool IsFinal
+        {
+            get
+            {
+                return _typicalMethodDef.IsFinal;
             }
         }
 

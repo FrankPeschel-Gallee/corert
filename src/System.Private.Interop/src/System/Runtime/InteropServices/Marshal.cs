@@ -179,10 +179,10 @@ namespace System.Runtime.InteropServices
         {
             RuntimeTypeHandle typeHandle = t.TypeHandle;
 
-            McgStructMarshalData structMarshalData;
-            if (McgModuleManager.TryGetStructMarshalData(typeHandle, out structMarshalData))
+            RuntimeTypeHandle unsafeStructType;
+            if (McgModuleManager.TryGetStructUnsafeStructType(typeHandle, out unsafeStructType))
             {
-                return structMarshalData.UnsafeStructType.GetValueTypeSize();
+                return unsafeStructType.GetValueTypeSize();
             }
 
             if (!typeHandle.IsBlittable() && !typeHandle.IsValueType())
@@ -619,7 +619,7 @@ namespace System.Runtime.InteropServices
                 createCOMException: false,
                 hasErrorInfo: false);
 #else
-            throw new PlatformNotSupportedException();
+            throw new PlatformNotSupportedException("GetExceptionForHR");
 #endif // ENABLE_WINRT
         }
 
@@ -649,12 +649,7 @@ namespace System.Runtime.InteropServices
         //====================================================================
         public static IntPtr AllocHGlobal(IntPtr cb)
         {
-            IntPtr pNewMem = ExternalInterop.MemAlloc(cb);
-            if (pNewMem == IntPtr.Zero)
-            {
-                throw new OutOfMemoryException();
-            }
-            return pNewMem;
+            return ExternalInterop.MemAlloc(cb);
         }
 
         public static IntPtr AllocHGlobal(int cb)
@@ -672,12 +667,7 @@ namespace System.Runtime.InteropServices
 
         public unsafe static IntPtr ReAllocHGlobal(IntPtr pv, IntPtr cb)
         {
-            IntPtr pNewMem = ExternalInterop.MemReAlloc(pv, cb);
-            if (pNewMem == IntPtr.Zero)
-            {
-                throw new OutOfMemoryException();
-            }
-            return pNewMem;
+            return ExternalInterop.MemReAlloc(pv, cb);
         }
 
         private unsafe static void ConvertToAnsi(string source, IntPtr pbNativeBuffer, int cbNativeBuffer)
@@ -790,15 +780,8 @@ namespace System.Runtime.InteropServices
                     throw new ArgumentOutOfRangeException("s");
 
                 IntPtr hglobal = ExternalInterop.MemAlloc(new IntPtr(nb));
-                if (hglobal == IntPtr.Zero)
-                {
-                    throw new OutOfMemoryException();
-                }
-                else
-                {
-                    ConvertToAnsi(s, hglobal, nb);
-                    return hglobal;
-                }
+                ConvertToAnsi(s, hglobal, nb);
+                return hglobal;
             }
         }
 
@@ -817,19 +800,11 @@ namespace System.Runtime.InteropServices
                     throw new ArgumentOutOfRangeException("s");
 
                 IntPtr hglobal = ExternalInterop.MemAlloc(new UIntPtr((uint)nb));
-
-                if (hglobal == IntPtr.Zero)
+                fixed (char* firstChar = s)
                 {
-                    throw new OutOfMemoryException();
+                    InteropExtensions.Memcpy(hglobal, new IntPtr(firstChar), nb);
                 }
-                else
-                {
-                    fixed (char* firstChar = s)
-                    {
-                        InteropExtensions.Memcpy(hglobal, new IntPtr(firstChar), nb);
-                    }
-                    return hglobal;
-                }
+                return hglobal;
             }
         }
 
@@ -1112,7 +1087,7 @@ namespace System.Runtime.InteropServices
             if (d == null)
                 throw new ArgumentNullException("d");
 
-            return McgModuleManager.GetStubForPInvokeDelegate(d);
+            return McgMarshal.GetStubForPInvokeDelegate(d);
         }
 
         public static IntPtr GetFunctionPointerForDelegate<TDelegate>(TDelegate d)
@@ -1127,7 +1102,6 @@ namespace System.Runtime.InteropServices
         private static unsafe void PtrToStructureHelper(IntPtr ptr, Object structure)
         {
             RuntimeTypeHandle structureTypeHandle = structure.GetType().TypeHandle;
-            McgStructMarshalData structMarshalData;
 
             // Boxed struct start at offset 1 (EEType* at offset 0) while class start at offset 0
             int offset = structureTypeHandle.IsValueType() ? 1 : 0;
@@ -1147,13 +1121,14 @@ namespace System.Runtime.InteropServices
                 return;
             }
 
-            if (McgModuleManager.TryGetStructMarshalData(structureTypeHandle, out structMarshalData))
+            IntPtr unmarshalStub;
+            if (McgModuleManager.TryGetStructUnmarshalStub(structureTypeHandle, out unmarshalStub))
             {
                 InteropExtensions.PinObjectAndCall(structure,
                     unboxedStructPtr =>
                     {
                         CalliIntrinsics.Call<int>(
-                            structMarshalData.UnmarshalStub,
+                            unmarshalStub,
                             (void*)ptr,                                     // unsafe (no need to adjust as it is always struct)
                             ((void*)((IntPtr*)unboxedStructPtr + offset))   // safe (need to adjust offset as it could be class)
                         );
@@ -1231,7 +1206,6 @@ namespace System.Runtime.InteropServices
             }
 
             RuntimeTypeHandle structureTypeHandle = structure.GetType().TypeHandle;
-            McgStructMarshalData structMarshalData;
 
             // Boxed struct start at offset 1 (EEType* at offset 0) while class start at offset 0
             int offset = structureTypeHandle.IsValueType() ? 1 : 0;
@@ -1251,13 +1225,14 @@ namespace System.Runtime.InteropServices
                 return;
             }
 
-            if (McgModuleManager.TryGetStructMarshalData(structureTypeHandle, out structMarshalData))
+            IntPtr marshalStub;
+            if (McgModuleManager.TryGetStructMarshalStub(structureTypeHandle, out marshalStub))
             {
                 InteropExtensions.PinObjectAndCall(structure,
                     unboxedStructPtr =>
                     {
                         CalliIntrinsics.Call<int>(
-                            structMarshalData.MarshalStub,
+                            marshalStub,
                             ((void*)((IntPtr*)unboxedStructPtr + offset)),  // safe (need to adjust offset as it could be class)
                             (void*)ptr                                      // unsafe (no need to adjust as it is always struct)
                         );
@@ -1315,17 +1290,18 @@ namespace System.Runtime.InteropServices
                 return;
             }
 
-            McgStructMarshalData structMarshalData;
-            if (McgModuleManager.TryGetStructMarshalData(structureTypeHandle, out structMarshalData))
+            IntPtr destroyStructureStub;
+            bool hasInvalidLayout;
+            if (McgModuleManager.TryGetDestroyStructureStub(structureTypeHandle, out destroyStructureStub, out hasInvalidLayout))
             {
-                if (structMarshalData.HasInvalidLayout)
+                if (hasInvalidLayout)
                     throw new ArgumentException(SR.Argument_MustHaveLayoutOrBeBlittable, structureTypeHandle.GetDisplayName());
 
                 // DestroyStructureStub == IntPtr.Zero means its fields don't need to be destroied
-                if (structMarshalData.DestroyStructureStub != IntPtr.Zero)
+                if (destroyStructureStub != IntPtr.Zero)
                 {
                     CalliIntrinsics.Call<int>(
-                        structMarshalData.DestroyStructureStub,
+                        destroyStructureStub,
                         (void*)ptr                                     // unsafe (no need to adjust as it is always struct)
                     );
                 }
@@ -1567,49 +1543,49 @@ namespace System.Runtime.InteropServices
         public static byte ReadByte(Object ptr, int ofs)
         {
             // Obsolete
-            throw new PlatformNotSupportedException();
+            throw new PlatformNotSupportedException("ReadByte");
         }
 
         public static short ReadInt16(Object ptr, int ofs)
         {
             // Obsolete
-            throw new PlatformNotSupportedException();
+            throw new PlatformNotSupportedException("ReadInt16");
         }
 
         public static int ReadInt32(Object ptr, int ofs)
         {
             // Obsolete
-            throw new PlatformNotSupportedException();
+            throw new PlatformNotSupportedException("ReadInt32");
         }
 
         public static long ReadInt64(Object ptr, int ofs)
         {
             // Obsolete
-            throw new PlatformNotSupportedException();
+            throw new PlatformNotSupportedException("ReadInt64");
         }
 
         public static void WriteByte(Object ptr, int ofs, byte val)
         {
             // Obsolete
-            throw new PlatformNotSupportedException();
+            throw new PlatformNotSupportedException("WriteByte");
         }
 
         public static void WriteInt16(Object ptr, int ofs, short val)
         {
             // Obsolete
-            throw new PlatformNotSupportedException();
+            throw new PlatformNotSupportedException("WriteInt16");
         }
 
         public static void WriteInt32(Object ptr, int ofs, int val)
         {
             // Obsolete
-            throw new PlatformNotSupportedException();
+            throw new PlatformNotSupportedException("WriteInt32");
         }
 
         public static void WriteInt64(Object ptr, int ofs, long val)
         {
             // Obsolete
-            throw new PlatformNotSupportedException();
+            throw new PlatformNotSupportedException("WriteInt64");
         }
     }
 }

@@ -40,7 +40,7 @@ namespace System
         public AggregateException()
             : base(SR.AggregateException_ctor_DefaultMessage)
         {
-            m_innerExceptions = new ReadOnlyCollection<Exception>(new Exception[0]);
+            m_innerExceptions = new ReadOnlyCollection<Exception>(Array.Empty<Exception>());
         }
 
         /// <summary>
@@ -51,7 +51,7 @@ namespace System
         public AggregateException(string message)
             : base(message)
         {
-            m_innerExceptions = new ReadOnlyCollection<Exception>(new Exception[0]);
+            m_innerExceptions = new ReadOnlyCollection<Exception>(Array.Empty<Exception>());
         }
 
         /// <summary>
@@ -380,6 +380,7 @@ namespace System
             return new AggregateException(Message, flattenedExceptions);
         }
 
+#if CORERT
         /// <summary>Gets a message that describes the exception.</summary>
         public override string Message
         {
@@ -403,6 +404,7 @@ namespace System
                 return sb.ToString();
             }
         }
+#endif
 
         /// <summary>
         /// Creates and returns a string representation of the current <see cref="AggregateException"/>.

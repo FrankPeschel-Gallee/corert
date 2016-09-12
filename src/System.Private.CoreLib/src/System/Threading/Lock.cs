@@ -22,22 +22,6 @@ namespace System.Threading
         private static int s_maxSpinCount = -1; // -1 means the spin count has not yet beeen determined.
 
         //
-        // IsLock is faster that "obj as Lock()", as it avoids the overhead of the full
-        // casting logic in the runtime.  This is only safe because a) EETypePtr
-        // overloads operator == to do the right thing, and b) Lock is sealed, so we
-        // don't need to waste time traversing the inheritence heirarchy.
-        //
-        internal static bool IsLock(object obj)
-        {
-#if CORERT
-            // CORERT-TODO
-            return obj is Lock;
-#else
-            return obj.EETypePtr == typeof(Lock).TypeHandle.ToEETypePtr();
-#endif
-        }
-
-        //
         // m_state layout:
         //
         // bit 0: True if the lock is held, false otherwise.

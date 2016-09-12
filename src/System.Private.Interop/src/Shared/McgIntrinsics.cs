@@ -119,6 +119,21 @@ namespace System.Runtime.InteropServices
             return default(int);
         }
 
+        internal static int StdCall__int(
+          IntPtr pfn,
+          IntPtr pComThis,
+          void* arg0,
+          IntPtr arg1,
+          uint arg2,
+          IntPtr arg3,
+          uint arg4,
+          void* arg5)
+        {
+
+            // This method is implemented elsewhere in the toolchain
+            return default(int);
+        }
+
         internal static T StdCall<T>(
                     System.IntPtr pfn,
                     void* pComThis,
@@ -137,19 +152,6 @@ namespace System.Runtime.InteropServices
                     void* arg2,
                     int arg3,
                     IntPtr arg4)
-        {
-            // This method is implemented elsewhere in the toolchain
-            return default(T);
-        }
-        internal static T StdCall<T>(
-                    System.IntPtr pfn,
-                    void* pComThis,
-                    void* arg0,
-                    IntPtr arg1,
-                    uint arg2,
-                    IntPtr arg3,
-                    uint arg4,
-                    void* arg5)
         {
             // This method is implemented elsewhere in the toolchain
             return default(T);
@@ -429,7 +431,7 @@ namespace System.Runtime.InteropServices
             System.IntPtr pfn,
             __ComObject arg0,
             System.IntPtr arg1,
-            McgClassInfo arg2)
+            RuntimeTypeHandle arg2)
         {
             return default(T);
         }
@@ -513,7 +515,7 @@ namespace System.Runtime.InteropServices
                                                         int mshlflags,
                                                         IntPtr pclsid);
 
-        internal delegate int AddrOfAttachingCtor(__ComObject comObject, IntPtr pBaseIUnknown, McgClassInfo classInfo);
+        internal delegate int AddrOfAttachingCtor(__ComObject comObject, IntPtr pBaseIUnknown, RuntimeTypeHandle classType);
         internal delegate int AddrOfGetSetInsertReplaceAll(IntPtr pComThis, uint index, IntPtr pItem);
         internal delegate int AddrOfRemoveAt(System.IntPtr pComThis, uint index);
         internal delegate int AddrOfGetMany1(IntPtr pComThis, uint startIndex, uint len, IntPtr pDest, IntPtr pCount);
@@ -522,6 +524,29 @@ namespace System.Runtime.InteropServices
         internal delegate int AddrOfAddRemoveMemoryPressure(System.IntPtr pComThis, ulong bytesAllocated);
 
         internal delegate bool AddrOfIsAlive(ComCallableObject comCallableObject);
+
+        internal delegate int AddrOfGetTypeInfo(
+            IntPtr pComThis,
+            uint iTInfo,
+            uint lcid,
+            IntPtr ppTInfo);
+        internal delegate int AddrOfGetIDsOfNames(
+            IntPtr pComThis,
+            IntPtr riid,
+            IntPtr rgszNames,
+            uint cNames,
+            uint lcid,
+            IntPtr rgDispId);
+        internal delegate int AddrOfInvoke(
+            IntPtr pComThis,
+            int dispIdMember,
+            IntPtr riid,
+            uint lcid,
+            ushort wFlags,
+            IntPtr pDispParams,
+            IntPtr pVarResult,
+            IntPtr pExcepInfo,
+            IntPtr puArgErr);
 
         // IStream
         internal delegate int AddrOfIStreamClone(IntPtr pComThis, out IntPtr ppstm);

@@ -106,7 +106,7 @@ inline void FATAL_GC_ERROR()
 #define MARK_ARRAY      //Mark bit in an array
 #endif //BACKGROUND_GC
 
-#if defined(BACKGROUND_GC) || defined (CARD_BUNDLE)
+#if defined(BACKGROUND_GC) || defined (CARD_BUNDLE) || defined(FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP)
 #define WRITE_WATCH     //Write Watch feature
 #endif //BACKGROUND_GC || CARD_BUNDLE
 
@@ -141,12 +141,12 @@ inline void FATAL_GC_ERROR()
 
 #if defined (SYNCHRONIZATION_STATS) || defined (STAGE_STATS)
 #define BEGIN_TIMING(x) \
-    LARGE_INTEGER x##_start; \
-    x##_start = GCToOSInterface::QueryPerformanceCounter ()
+    int64_t x##_start; \
+    x##_start = GCToOSInterface::QueryPerformanceCounter()
 
 #define END_TIMING(x) \
-    LARGE_INTEGER x##_end; \
-    x##_end = GCToOSInterface::QueryPerformanceCounter (); \
+    int64_t x##_end; \
+    x##_end = GCToOSInterface::QueryPerformanceCounter(); \
     x += x##_end - x##_start
 
 #else
@@ -604,12 +604,12 @@ public:
 
 // GC specific statistics, tracking counts and timings for GCs occuring in the system.
 // This writes the statistics to a file every 60 seconds, if a file is specified in
-// COMPLUS_GcMixLog
+// COMPlus_GcMixLog
 
 struct GCStatistics
     : public StatisticsBase
 {
-    // initialized to the contents of COMPLUS_GcMixLog, or NULL, if not present
+    // initialized to the contents of COMPlus_GcMixLog, or NULL, if not present
     static TCHAR* logFileName;
     static FILE*  logFile;
 
@@ -1648,6 +1648,12 @@ protected:
     void rearrange_large_heap_segments();
     PER_HEAP
     void rearrange_heap_segments(BOOL compacting);
+
+    PER_HEAP_ISOLATED
+    void reset_write_watch_for_gc_heap(void* base_address, size_t region_size);
+    PER_HEAP_ISOLATED
+    void get_write_watch_for_gc_heap(bool reset, void *base_address, size_t region_size, void** dirty_pages, uintptr_t* dirty_page_count_ref, bool is_runtime_suspended);
+
     PER_HEAP
     void switch_one_quantum();
     PER_HEAP
@@ -1657,7 +1663,7 @@ protected:
     PER_HEAP
     void reset_write_watch (BOOL concurrent_p);
     PER_HEAP
-    void adjust_ephemeral_limits ();
+    void adjust_ephemeral_limits (bool is_runtime_suspended);
     PER_HEAP
     void make_generation (generation& gen, heap_segment* seg,
                           uint8_t* start, uint8_t* pointer);
@@ -2066,6 +2072,12 @@ protected:
 
     PER_HEAP
     void pin_object (uint8_t* o, uint8_t** ppObject, uint8_t* low, uint8_t* high);
+
+#if defined(ENABLE_PERF_COUNTERS) || defined(FEATURE_EVENT_TRACE)
+    PER_HEAP_ISOLATED
+    size_t get_total_pinned_objects();
+#endif //ENABLE_PERF_COUNTERS || FEATURE_EVENT_TRACE
+
     PER_HEAP
     void reset_mark_stack ();
     PER_HEAP
@@ -2477,6 +2489,13 @@ protected:
 #endif // BIT64
     PER_HEAP_ISOLATED
     size_t get_total_heap_size ();
+    PER_HEAP_ISOLATED
+    size_t get_total_committed_size();
+
+    PER_HEAP_ISOLATED
+    void get_memory_info (uint32_t* memory_load, 
+                          uint64_t* available_physical=NULL,
+                          uint64_t* available_page_file=NULL);
     PER_HEAP
     size_t generation_size (int gen_number);
     PER_HEAP_ISOLATED
@@ -2505,6 +2524,8 @@ protected:
                                      uint8_t* end);
     PER_HEAP
     size_t generation_sizes (generation* gen);
+    PER_HEAP
+    size_t committed_size();
     PER_HEAP
     size_t approximate_new_allocation();
     PER_HEAP
@@ -2637,6 +2658,7 @@ protected:
     PER_HEAP_ISOLATED
     BOOL commit_mark_array_new_seg (gc_heap* hp, 
                                     heap_segment* seg,
+                                    uint32_t* new_card_table = 0,
                                     uint8_t* new_lowest_address = 0);
 
     PER_HEAP_ISOLATED
@@ -2719,19 +2741,6 @@ protected:
     void do_background_gc();
     static
     uint32_t __stdcall bgc_thread_stub (void* arg);
-
-#ifdef FEATURE_REDHAWK
-    // Helper used to wrap the start routine of background GC threads so we can do things like initialize the
-    // Redhawk thread state which requires running in the new thread's context.
-    static uint32_t WINAPI rh_bgc_thread_stub(void * pContext);
-
-    // Context passed to the above.
-    struct rh_bgc_thread_ctx
-    {
-        PTHREAD_START_ROUTINE   m_pRealStartRoutine;
-        gc_heap *               m_pRealContext;
-    };
-#endif //FEATURE_REDHAWK
 
 #endif //BACKGROUND_GC
  
@@ -2922,7 +2931,7 @@ public:
 
 #ifdef SHORT_PLUGS
     PER_HEAP_ISOLATED
-    float short_plugs_pad_ratio;
+    double short_plugs_pad_ratio;
 #endif //SHORT_PLUGS
 
 #ifdef BIT64
@@ -2940,7 +2949,7 @@ public:
     uint64_t total_physical_mem;
 
     PER_HEAP_ISOLATED
-    uint64_t available_physical_mem;
+    uint64_t entry_available_physical_mem;
 
     PER_HEAP_ISOLATED
     size_t last_gc_index;
@@ -3003,10 +3012,15 @@ protected:
     mark*       mark_stack_array;
 
     PER_HEAP
-    BOOL       verify_pinned_queue_p;
+    BOOL        verify_pinned_queue_p;
 
     PER_HEAP
-    uint8_t*       oldest_pinned_plug;
+    uint8_t*    oldest_pinned_plug;
+
+#if defined(ENABLE_PERF_COUNTERS) || defined(FEATURE_EVENT_TRACE)
+    PER_HEAP
+    size_t      num_pinned_objects;
+#endif //ENABLE_PERF_COUNTERS || FEATURE_EVENT_TRACE
 
 #ifdef FEATURE_LOH_COMPACTION
     PER_HEAP

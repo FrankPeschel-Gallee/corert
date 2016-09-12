@@ -14,100 +14,44 @@ using System.IO;
 
 namespace MetadataTransformTests
 {
-    class TestTypeSystemContext : TypeSystemContext
+    class TestTypeSystemContext : MetadataTypeSystemContext
     {
-        static readonly string[] s_wellKnownTypeNames = new string[] {
-            "Void",
-            "Boolean",
-            "Char",
-            "SByte",
-            "Byte",
-            "Int16",
-            "UInt16",
-            "Int32",
-            "UInt32",
-            "Int64",
-            "UInt64",
-            "IntPtr",
-            "UIntPtr",
-            "Single",
-            "Double",
-
-            "ValueType",
-            "Enum",
-            "Nullable`1",
-
-            "Object",
-            "String",
-            "Array",
-            "MulticastDelegate",
-
-            "RuntimeTypeHandle",
-            "RuntimeMethodHandle",
-            "RuntimeFieldHandle",
-        };
-
-        MetadataType[] _wellKnownTypes = new MetadataType[s_wellKnownTypeNames.Length];
-
-        EcmaModule _systemModule;
-
         Dictionary<string, EcmaModule> _modules = new Dictionary<string, EcmaModule>(StringComparer.OrdinalIgnoreCase);
 
-        public override DefType GetWellKnownType(WellKnownType wellKnownType)
+        public EcmaModule GetModuleForSimpleName(string simpleName, bool throwIfNotFound = true)
         {
-            return _wellKnownTypes[(int)wellKnownType - 1];
-        }
-
-        public void SetSystemModule(EcmaModule systemModule)
-        {
-            _systemModule = systemModule;
-
-            // Sanity check the name table
-            Debug.Assert(s_wellKnownTypeNames[(int)WellKnownType.MulticastDelegate - 1] == "MulticastDelegate");
-
-            // Initialize all well known types - it will save us from checking the name for each loaded type
-            for (int typeIndex = 0; typeIndex < _wellKnownTypes.Length; typeIndex++)
+            EcmaModule module;
+            if (!_modules.TryGetValue(simpleName, out module))
             {
-                MetadataType type = _systemModule.GetType("System", s_wellKnownTypeNames[typeIndex]);
-                type.SetWellKnownType((WellKnownType)(typeIndex + 1));
-                _wellKnownTypes[typeIndex] = type;
+                module = CreateModuleForSimpleName(simpleName);
             }
-        }
 
-        public EcmaModule GetModuleForSimpleName(string simpleName)
-        {
-            EcmaModule existingModule;
-            if (_modules.TryGetValue(simpleName, out existingModule))
-                return existingModule;
-
-            return CreateModuleForSimpleName(simpleName);
+            if (module == null && throwIfNotFound)
+            {
+                throw new FileNotFoundException(simpleName + ".dll");
+            }
+            return module;
         }
 
         public EcmaModule CreateModuleForSimpleName(string simpleName)
         {
-            EcmaModule module = new EcmaModule(this, new PEReader(File.OpenRead(simpleName + ".dll")));
+            EcmaModule module = null;
+            try
+            {
+                module = EcmaModule.Create(this, new PEReader(File.OpenRead(simpleName + ".dll")));
+            }
+            catch (FileNotFoundException)
+            {
+                // FileNotFound is treated as being unable to load the module
+            }
+
             _modules.Add(simpleName, module);
             return module;
         }
 
         public override ModuleDesc ResolveAssembly(System.Reflection.AssemblyName name, bool throwIfNotFound)
         {
-            return GetModuleForSimpleName(name.Name);
-        }
-
-        public override FieldLayoutAlgorithm GetLayoutAlgorithmForType(DefType type)
-        {
-            throw new NotImplementedException();
-        }
-
-        public override RuntimeInterfacesAlgorithm GetRuntimeInterfacesAlgorithmForNonPointerArrayType(ArrayType type)
-        {
-            throw new NotImplementedException();
-        }
-
-        public override RuntimeInterfacesAlgorithm GetRuntimeInterfacesAlgorithmForMetadataType(MetadataType type)
-        {
-            throw new NotImplementedException();
+            return GetModuleForSimpleName(name.Name, throwIfNotFound);
         }
     }
 }

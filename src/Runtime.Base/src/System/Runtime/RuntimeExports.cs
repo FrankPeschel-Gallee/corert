@@ -8,80 +8,14 @@
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
+
+using Internal.Runtime;
 
 namespace System.Runtime
 {
     internal static class RuntimeExports
     {
-#if !CORERT
-        //
-        // internalcalls for System.Runtime.InteropServices.GCHandle.
-        //
-
-        // Allocate handle.
-        [RuntimeExport("RhHandleAlloc")]
-        public static IntPtr RhHandleAlloc(object value, GCHandleType type)
-        {
-            IntPtr h = InternalCalls.RhpHandleAlloc(value, type);
-
-            if (h == IntPtr.Zero)
-            {
-                // Throw the out of memory exception defined by the classlib, using the return address of this method
-                // to find the correct classlib.
-
-                ExceptionIDs exID = ExceptionIDs.OutOfMemory;
-
-                IntPtr returnAddr = BinderIntrinsics.GetReturnAddress();
-                Exception e = EH.GetClasslibException(exID, returnAddr);
-                throw e;
-            }
-
-            return h;
-        }
-
-        // Allocate dependent handle.
-        [RuntimeExport("RhHandleAllocDependent")]
-        public static IntPtr RhHandleAllocDependent(object primary, object secondary)
-        {
-            IntPtr h = InternalCalls.RhpHandleAllocDependent(primary, secondary);
-
-            if (h == IntPtr.Zero)
-            {
-                // Throw the out of memory exception defined by the classlib, using the return address of this method
-                // to find the correct classlib.
-
-                ExceptionIDs exID = ExceptionIDs.OutOfMemory;
-
-                IntPtr returnAddr = BinderIntrinsics.GetReturnAddress();
-                Exception e = EH.GetClasslibException(exID, returnAddr);
-                throw e;
-            }
-
-            return h;
-        }
-
-        // Allocate variable handle.
-        [RuntimeExport("RhHandleAllocVariable")]
-        public static IntPtr RhHandleAllocVariable(object value, uint type)
-        {
-            IntPtr h = InternalCalls.RhpHandleAllocVariable(value, type);
-
-            if (h == IntPtr.Zero)
-            {
-                // Throw the out of memory exception defined by the classlib, using the return address of this method
-                // to find the correct classlib.
-
-                ExceptionIDs exID = ExceptionIDs.OutOfMemory;
-
-                IntPtr returnAddr = BinderIntrinsics.GetReturnAddress();
-                Exception e = EH.GetClasslibException(exID, returnAddr);
-                throw e;
-            }
-
-            return h;
-        }
-#endif // !CORERT
-
         //
         // internal calls for allocation
         //
@@ -139,8 +73,8 @@ namespace System.Runtime
 
                 // Switch type we're going to box to the Nullable<T> target type and advance the data pointer
                 // to the value embedded within the nullable.
-                pData = (byte*)pData + ptrEEType->GetNullableValueOffset();
-                ptrEEType = ptrEEType->GetNullableType();
+                pData = (byte*)pData + ptrEEType->NullableValueOffset;
+                ptrEEType = ptrEEType->NullableType;
             }
 
 #if FEATURE_64BIT_ALIGNMENT
@@ -183,6 +117,39 @@ namespace System.Runtime
                 return data.o;
         }
 
+        private unsafe static bool UnboxAnyTypeCompare(EEType *pEEType, EEType *ptrUnboxToEEType)
+        {
+            bool result = false;
+
+            if (pEEType->CorElementType == ptrUnboxToEEType->CorElementType)
+            {
+                result = TypeCast.AreTypesEquivalentInternal(pEEType, ptrUnboxToEEType);
+
+                if (!result)
+                {
+                    // Enum's and primitive types should pass the UnboxAny exception cases
+                    // if they have an exactly matching cor element type.
+                    switch (ptrUnboxToEEType->CorElementType)
+                    {
+                        case CorElementType.ELEMENT_TYPE_I1:
+                        case CorElementType.ELEMENT_TYPE_U1:
+                        case CorElementType.ELEMENT_TYPE_I2:
+                        case CorElementType.ELEMENT_TYPE_U2:
+                        case CorElementType.ELEMENT_TYPE_I4:
+                        case CorElementType.ELEMENT_TYPE_U4:
+                        case CorElementType.ELEMENT_TYPE_I8:
+                        case CorElementType.ELEMENT_TYPE_U8:
+                        case CorElementType.ELEMENT_TYPE_I:
+                        case CorElementType.ELEMENT_TYPE_U:
+                            result = true;
+                            break;
+                    }
+                }
+            }
+
+            return result;
+        }
+
         [RuntimeExport("RhUnboxAny")]
         public unsafe static void RhUnboxAny(object o, ref Hack_o_p data, EETypePtr pUnboxToEEType)
         {
@@ -198,9 +165,11 @@ namespace System.Runtime
                     bool isValid = false;
 
                     if (ptrUnboxToEEType->IsNullable)
-                        isValid = (o == null) || (o.EEType == ptrUnboxToEEType->GetNullableType());
-                    else
-                        isValid = (o != null && o.EEType->CorElementType == ptrUnboxToEEType->CorElementType && TypeCast.IsInstanceOfClass(o, ptrUnboxToEEType) != null);
+                        isValid = (o == null) || TypeCast.AreTypesEquivalentInternal(o.EEType, ptrUnboxToEEType->NullableType);
+                    else if (o != null)
+                    {
+                        isValid = UnboxAnyTypeCompare(o.EEType, ptrUnboxToEEType);
+                    }
 
                     if (!isValid)
                     {
@@ -209,16 +178,22 @@ namespace System.Runtime
 
                         ExceptionIDs exID = o == null ? ExceptionIDs.NullReference : ExceptionIDs.InvalidCast;
 
-                        IntPtr addr = ptrUnboxToEEType->GetAssociatedModuleAddress();
-                        Exception e = EH.GetClasslibException(exID, addr);
-
-                        BinderIntrinsics.TailCall_RhpThrowEx(e);
+                        throw ptrUnboxToEEType->GetClasslibException(exID);
                     }
                     InternalCalls.RhUnbox(o, pData - 1, ptrUnboxToEEType);
                 }
             }
             else
-                data.o = o;
+            {
+                if (o == null || (TypeCast.IsInstanceOf(o, ptrUnboxToEEType) != null))
+                {
+                    data.o = o;
+                }
+                else
+                {
+                    throw ptrUnboxToEEType->GetClasslibException(ExceptionIDs.InvalidCast);
+                }
+            }
         }
 
 #if CORERT
@@ -234,10 +209,7 @@ namespace System.Runtime
                 // We allow enums and their primtive type to be interchangable
                 if (obj.EEType->CorElementType != ptrUnboxToEEType->CorElementType)
                 {
-                    IntPtr addr = ptrUnboxToEEType->GetAssociatedModuleAddress();
-                    Exception e = EH.GetClasslibException(ExceptionIDs.InvalidCast, addr);
-
-                    BinderIntrinsics.TailCall_RhpThrowEx(e);
+                    throw ptrUnboxToEEType->GetClasslibException(ExceptionIDs.InvalidCast);
                 }
             }
 
@@ -260,12 +232,9 @@ namespace System.Runtime
             // and going back one pointer-sized unit
             fixed (IntPtr* pData = &data.p)
             {
-                if ((obj != null) && (obj.EEType != ptrUnboxToEEType->GetNullableType()))
+                if ((obj != null) && (obj.EEType != ptrUnboxToEEType->NullableType))
                 {
-                    IntPtr addr = ptrUnboxToEEType->GetAssociatedModuleAddress();
-                    Exception e = EH.GetClasslibException(ExceptionIDs.InvalidCast, addr);
-
-                    BinderIntrinsics.TailCall_RhpThrowEx(e);
+                    throw ptrUnboxToEEType->GetClasslibException(ExceptionIDs.InvalidCast);
                 }
                 InternalCalls.RhUnbox(obj, pData - 1, ptrUnboxToEEType);
             }
@@ -340,189 +309,24 @@ namespace System.Runtime
         }
 
         [RuntimeExport("RhpReversePInvokeBadTransition")]
-        public static void RhpReversePInvokeBadTransition()
+        public static void RhpReversePInvokeBadTransition(IntPtr returnAddress)
         {
-#if CORERT
-            EH.FallbackFailFast(RhFailFastReason.IllegalNativeCallableEntry, null);
-#else
-            IntPtr returnAddress = BinderIntrinsics.GetReturnAddress();
-            if (returnAddress != IntPtr.Zero)
-            {
-                EH.FailFastViaClasslib(
-                    RhFailFastReason.IllegalNativeCallableEntry,
-                    null,
-                    returnAddress);
-            }
-            else
-            {
-                // @HACKHACK: we need to force the method to have an EBP frame so that we can use the
-                // GetReturnAddress() intrinsic above.  This seems to be the smallest way to do this.
-                EH.FallbackFailFast(RhFailFastReason.InternalError, null);
-                throw EH.GetClasslibException(ExceptionIDs.Arithmetic, returnAddress);
-            }
-#endif
+            EH.FailFastViaClasslib(
+                RhFailFastReason.IllegalNativeCallableEntry,
+                null,
+                returnAddress);
         }
 
-        // EEType interrogation methods.
-
-        [RuntimeExport("RhGetRelatedParameterType")]
-        public static unsafe EETypePtr RhGetRelatedParameterType(EETypePtr ptrEEType)
+        [RuntimeExport("RhGetCurrentThreadStackTrace")]
+        [MethodImpl(MethodImplOptions.NoInlining)] // Ensures that the RhGetCurrentThreadStackTrace frame is always present
+        public static unsafe int RhGetCurrentThreadStackTrace(IntPtr[] outputBuffer)
         {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return new EETypePtr((IntPtr)pEEType->RelatedParameterType);
+            fixed (IntPtr* pOutputBuffer = outputBuffer)
+                return RhpGetCurrentThreadStackTrace(pOutputBuffer, (uint)((outputBuffer != null) ? outputBuffer.Length : 0));
         }
 
-        [RuntimeExport("RhGetNonArrayBaseType")]
-        public static unsafe EETypePtr RhGetNonArrayBaseType(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return new EETypePtr((IntPtr)pEEType->NonArrayBaseType);
-        }
-
-        [RuntimeExport("RhGetComponentSize")]
-        public static unsafe ushort RhGetComponentSize(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return pEEType->ComponentSize;
-        }
-
-        [RuntimeExport("RhGetNumInterfaces")]
-        public static unsafe uint RhGetNumInterfaces(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return (uint)pEEType->NumInterfaces;
-        }
-
-        [RuntimeExport("RhGetInterface")]
-        public static unsafe EETypePtr RhGetInterface(EETypePtr ptrEEType, uint index)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-
-            // The convoluted pointer arithmetic into the interface map below (rather than a simply array
-            // dereference) is because C# will generate a 64-bit multiply for the lookup by default. This
-            // causes us a problem on x86 because it uses a helper that's mapped directly into the CRT via
-            // import magic and that technique doesn't work with the way we link this code into the runtime
-            // image. Since we don't need a 64-bit multiply here (the classlib is trusted code) we manually
-            // perform the calculation.
-            EEInterfaceInfo* pInfo = (EEInterfaceInfo*)((byte*)pEEType->InterfaceMap + (index * (uint)sizeof(EEInterfaceInfo)));
-
-            return new EETypePtr((IntPtr)pInfo->InterfaceType);
-        }
-
-        [RuntimeExport("RhSetInterface")]
-        public static unsafe void RhSetInterface(EETypePtr ptrEEType, int index, EETypePtr ptrInterfaceEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            EEType* pInterfaceEEType = ptrInterfaceEEType.ToPointer();
-            pEEType->InterfaceMap[index].InterfaceType = pInterfaceEEType;
-        }
-
-        [RuntimeExport("RhIsDynamicType")]
-        public static unsafe bool RhIsDynamicType(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return pEEType->IsDynamicType;
-        }
-
-        [RuntimeExport("RhHasCctor")]
-        public static unsafe bool RhHasCctor(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return pEEType->HasCctor;
-        }
-
-        [RuntimeExport("RhIsValueType")]
-        public static unsafe bool RhIsValueType(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return pEEType->IsValueType;
-        }
-
-        [RuntimeExport("RhIsInterface")]
-        public static unsafe bool RhIsInterface(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return pEEType->IsInterface;
-        }
-
-        [RuntimeExport("RhIsArray")]
-        public static unsafe bool RhIsArray(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return pEEType->IsArray;
-        }
-
-        [RuntimeExport("RhIsString")]
-        public static unsafe bool RhIsString(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            // String is currently the only non-array type with a non-zero component size.
-            return (pEEType->ComponentSize == sizeof(char)) && !pEEType->IsArray;
-        }
-
-        [RuntimeExport("RhIsNullable")]
-        public static unsafe bool RhIsNullable(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return pEEType->IsNullable;
-        }
-
-        [RuntimeExport("RhGetNullableType")]
-        public static unsafe EETypePtr RhGetNullableType(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return new EETypePtr((IntPtr)pEEType->GetNullableType());
-        }
-
-        [RuntimeExport("RhHasReferenceFields")]
-        public static unsafe bool RhHasReferenceFields(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return pEEType->HasReferenceFields;
-        }
-
-        [RuntimeExport("RhGetCorElementType")]
-        public static unsafe byte RhGetCorElementType(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return (byte)pEEType->CorElementType;
-        }
-
-        public enum RhEETypeClassification
-        {
-            Regular,                // Object, String, Int32
-            Array,                  // String[]
-            Generic,                // List<Int32>
-            GenericTypeDefinition,  // List<T>
-            UnmanagedPointer,       // void*
-        }
-
-        [RuntimeExport("RhGetEETypeClassification")]
-        public static unsafe RhEETypeClassification RhGetEETypeClassification(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-
-            if (pEEType->IsArray)
-                return RhEETypeClassification.Array;
-
-            if (pEEType->IsGeneric)
-                return RhEETypeClassification.Generic;
-
-            if (pEEType->IsGenericTypeDefinition)
-                return RhEETypeClassification.GenericTypeDefinition;
-
-            if (pEEType->IsPointerTypeDefinition)
-                return RhEETypeClassification.UnmanagedPointer;
-
-            return RhEETypeClassification.Regular;
-        }
-
-        [RuntimeExport("RhGetEETypeHash")]
-        public static unsafe uint RhGetEETypeHash(EETypePtr ptrEEType)
-        {
-            EEType* pEEType = ptrEEType.ToPointer();
-            return pEEType->HashCode;
-        }
+        [DllImport(Redhawk.BaseName, CallingConvention = CallingConvention.Cdecl)]
+        private static unsafe extern int RhpGetCurrentThreadStackTrace(IntPtr* pOutputBuffer, uint outputBufferLength);
 
         // Worker for RhGetCurrentThreadStackTrace.  RhGetCurrentThreadStackTrace just allocates a transition
         // frame that will be used to seed the stack trace and this method does all the real work.
@@ -536,26 +340,29 @@ namespace System.Runtime
         // NOTE: We don't want to allocate the array on behalf of the caller because we don't know which class
         // library's objects the caller understands (we support multiple class libraries with multiple root
         // System.Object types).
-        [RuntimeExport("RhpCalculateStackTraceWorker")]
-        public static unsafe int RhpCalculateStackTraceWorker(IntPtr[] outputBuffer)
+        [NativeCallable(EntryPoint = "RhpCalculateStackTraceWorker", CallingConvention = CallingConvention.Cdecl)]
+        private static unsafe int RhpCalculateStackTraceWorker(IntPtr * pOutputBuffer, uint outputBufferLength)
         {
-            int nFrames = 0;
-            bool success = (outputBuffer != null);
+            uint nFrames = 0;
+            bool success = true;
 
             StackFrameIterator frameIter = new StackFrameIterator();
+
             bool isValid = frameIter.Init(null);
-            for (; isValid; isValid = frameIter.Next())
+            Debug.Assert(isValid, "Missing RhGetCurrentThreadStackTrace frame");
+
+            // Note that the while loop will skip RhGetCurrentThreadStackTrace frame
+            while (frameIter.Next())
             {
-                if (outputBuffer != null)
-                {
-                    if (nFrames < outputBuffer.Length)
-                        outputBuffer[nFrames] = new IntPtr(frameIter.ControlPC);
-                    else
-                        success = false;
-                }
+                if (nFrames < outputBufferLength)
+                    pOutputBuffer[nFrames] = new IntPtr(frameIter.ControlPC);
+                else
+                    success = false;
+
                 nFrames++;
             }
-            return success ? nFrames : -nFrames;
+
+            return success ? (int)nFrames : -(int)nFrames;
         }
 
         // The GC conservative reporting descriptor is a special structure of data that the GC

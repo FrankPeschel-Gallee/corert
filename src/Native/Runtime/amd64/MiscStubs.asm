@@ -4,33 +4,11 @@
 
 include AsmMacros.inc
 
-EXTERN RhpShutdownHelper            : PROC
 EXTERN GetClasslibCCtorCheck        : PROC
 EXTERN memcpy                       : PROC
 EXTERN memcpyGCRefs                 : PROC
 EXTERN memcpyGCRefsWithWriteBarrier : PROC
 EXTERN memcpyAnyWithWriteBarrier    : PROC
-
-;;
-;; Currently called only from a managed executable once Main returns, this routine does whatever is needed to
-;; cleanup managed state before exiting.
-;;
-;;  Input:
-;;      rcx : Process exit code
-;;
-NESTED_ENTRY RhpShutdown, _TEXT
-
-        INLINE_GETTHREAD        rax, r10                ; rax <- Thread pointer, r10 <- trashed
-        PUSH_COOP_PINVOKE_FRAME rax, r10, no_extraStack ; rax <- in: Thread, out: trashed, r10 <- trashed
-        END_PROLOGUE
-
-        ;; Call the bulk of the helper implemented in C++. Takes the exit code already in rcx.
-        call    RhpShutdownHelper
-
-        POP_COOP_PINVOKE_FRAME  no_extraStack
-        ret
-
-NESTED_END RhpShutdown, _TEXT
 
 ;;
 ;; Checks whether the static class constructor for the type indicated by the context structure has been
@@ -93,7 +71,7 @@ LEAF_END RhpCheckCctor2, _TEXT
 ;;
 NESTED_ENTRY RhpCheckCctor2__SlowPath, _TEXT
 
-RhpCheckCctor2__SlowPath_FrameSize equ 20h + 10h  ;; Scratch space + storage to save off rax, and rdx value
+RhpCheckCctor2__SlowPath_FrameSize equ 20h + 10h + 8h ;; Scratch space + storage to save off rax/rdx value + align stack 
 
         alloc_stack RhpCheckCctor2__SlowPath_FrameSize
         save_reg_postrsp    rdx, 20h
@@ -122,47 +100,6 @@ RhpCheckCctor2__SlowPath_FrameSize equ 20h + 10h  ;; Scratch space + storage to 
         TAILJMP_RAX
 
 NESTED_END RhpCheckCctor2__SlowPath, _TEXT
-
-
-;;
-;; Input:
-;;      rcx: address of location on stack containing return address.
-;;      
-;; Outpt:
-;;      rax: proper (unhijacked) return address
-;;
-;; Trashes: rdx
-;;
-LEAF_ENTRY RhpLoadReturnAddress, _TEXT
-
-        INLINE_GETTHREAD   rax, rdx
-        cmp     rcx, [rax + OFFSETOF__Thread__m_ppvHijackedReturnAddressLocation]
-        je      GetHijackedReturnAddress
-        mov     rax, [rcx]
-        ret
-
-GetHijackedReturnAddress:
-        mov     rax, [rax + OFFSETOF__Thread__m_pvHijackedReturnAddress]
-        ret
-
-LEAF_END RhpLoadReturnAddress, _TEXT
-
-
-;;
-;; RCX = output buffer (an IntPtr[] managed object)
-;;
-NESTED_ENTRY RhGetCurrentThreadStackTrace, _TEXT
-        INLINE_GETTHREAD        rax, r10        ; rax <- Thread pointer, r10 <- trashed
-        mov                     r11, rax        ; r11 <- Thread pointer
-        PUSH_COOP_PINVOKE_FRAME rax, r10, no_extraStack ; rax <- in: Thread, out: trashed, r10 <- trashed
-        END_PROLOGUE
-
-        ;; pass-through argument registers
-        call        RhpCalculateStackTraceWorker
-
-        POP_COOP_PINVOKE_FRAME  no_extraStack
-        ret
-NESTED_END RhGetCurrentThreadStackTrace, _TEXT
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

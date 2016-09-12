@@ -36,6 +36,16 @@ namespace System.Runtime
         [RuntimeImport(RuntimeLibrary, "RhSuppressFinalize")]
         internal static extern void RhSuppressFinalize(Object obj);
 
+        internal static void RhReRegisterForFinalize(Object obj)
+        {
+            if (!_RhReRegisterForFinalize(obj))
+                throw new OutOfMemoryException();
+        }
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        [RuntimeImport(RuntimeLibrary, "RhReRegisterForFinalize")]
+        private static extern bool _RhReRegisterForFinalize(Object obj);
+
         // Wait for all pending finalizers. This must be a p/invoke to avoid starving the GC.
         [DllImport(RuntimeLibrary, ExactSpelling = true)]
         private static extern void RhWaitForPendingFinalizers(int allowReentrantWait);
@@ -63,10 +73,6 @@ namespace System.Runtime
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhGetGeneration")]
         internal static extern int RhGetGeneration(Object obj);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhReRegisterForFinalize")]
-        internal static extern void RhReRegisterForFinalize(Object obj);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhGetGcLatencyMode")]
@@ -112,7 +118,7 @@ namespace System.Runtime
         // calls for GCHandle.
         // These methods are needed to implement GCHandle class like functionality (optional)
         //
-#if CORERT
+
         // Allocate handle.
         [MethodImpl(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhpHandleAlloc")]
@@ -146,27 +152,11 @@ namespace System.Runtime
 
         internal static IntPtr RhHandleAllocVariable(Object value, uint type)
         {
-            IntPtr h = RhHandleAllocVariable(value, type);
+            IntPtr h = RhpHandleAllocVariable(value, type);
             if (h == IntPtr.Zero)
                 throw new OutOfMemoryException();
             return h;
         }
-#else // CORERT
-        // Allocate handle.
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhHandleAlloc")]
-        internal static extern IntPtr RhHandleAlloc(Object value, GCHandleType type);
-
-        // Allocate handle for dependent handle case where a secondary can be set at the same time.
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhHandleAllocDependent")]
-        internal static extern IntPtr RhHandleAllocDependent(Object primary, Object secondary);
-
-        // Allocate variable handle with its initial type.
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhHandleAllocVariable")]
-        internal static extern IntPtr RhHandleAllocVariable(Object value, uint type);
-#endif // CORERT
 
         // Free handle.
         [MethodImpl(MethodImplOptions.InternalCall)]
@@ -222,10 +212,6 @@ namespace System.Runtime
         internal static extern bool AreTypesAssignable(EETypePtr pSourceType, EETypePtr pTargetType);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetEETypeHash")]
-        internal static extern uint RhGetEETypeHash(EETypePtr pType);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhTypeCast_CheckArrayStore")]
         internal static extern void RhCheckArrayStore(Object array, Object obj);
 
@@ -259,13 +245,6 @@ namespace System.Runtime
         [MethodImpl(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhNewArray")]
         internal static extern String RhNewArrayAsString(EETypePtr pEEType, int length);
-
-        // Given the OS handle of a loaded Redhawk module, return true if the runtime no longer has any
-        // references to resources in that module (i.e. the module can be safely unloaded with FreeLibrary, at
-        // least as far as the runtime knows).
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhCanUnloadModule")]
-        internal static extern bool RhCanUnloadModule(IntPtr hOsModule);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhBox")]
@@ -309,80 +288,6 @@ namespace System.Runtime
         //
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetEETypeClassification")]
-        internal static extern RhEETypeClassification RhGetEETypeClassification(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetEETypeClassification")]
-        internal static extern RhEETypeClassification RhGetEETypeClassification(IntPtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhIsValueType")]
-        internal static extern bool RhIsValueType(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhIsInterface")]
-        internal static extern bool RhIsInterface(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhIsArray")]
-        internal static extern bool RhIsArray(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhIsString")]
-        internal static extern bool RhIsString(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhHasReferenceFields")]
-        internal static extern bool RhHasReferenceFields(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetCorElementType")]
-        internal static extern RhCorElementType RhGetCorElementType(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetValueTypeSize")]
-        internal static extern uint RhGetValueTypeSize(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhIsNullable")]
-        internal static extern bool RhIsNullable(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetNullableType")]
-        internal static extern EETypePtr RhGetNullableType(EETypePtr pEEType);
-
-        //
-        // EEType Array Dissectors
-        //
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetRelatedParameterType")]
-        internal static extern EETypePtr RhGetRelatedParameterType(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetComponentSize")]
-        internal static extern ushort RhGetComponentSize(EETypePtr pEEType);
-
-        //
-        // EEType Parent Hierarchy
-        //
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetNonArrayBaseType")]
-        internal static extern EETypePtr RhGetNonArrayBaseType(EETypePtr pEEType);
-
-
-        // Note: This reports the transitive closure, not just the directly implemented interfaces.
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetNumInterfaces")]
-        internal static extern uint RhGetNumInterfaces(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhGetInterface")]
-        internal static extern EETypePtr RhGetInterface(EETypePtr pEEType, uint index);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhGetGCDescSize")]
         internal static extern int RhGetGCDescSize(EETypePtr eeType);
 
@@ -390,14 +295,6 @@ namespace System.Runtime
         [RuntimeImport(RuntimeLibrary, "RhCreateGenericInstanceDescForType2")]
         internal static unsafe extern bool RhCreateGenericInstanceDescForType2(EETypePtr pEEType, int arity, int nonGcStaticDataSize,
             int nonGCStaticDataOffset, int gcStaticDataSize, int threadStaticsOffset, void* pGcStaticsDesc, void* pThreadStaticsDesc, int* pGenericVarianceFlags);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhAllocateMemory")]
-        internal static unsafe extern IntPtr RhAllocateMemory(int sizeInBytes);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhSetInterface")]
-        internal static unsafe extern void RhSetInterface(EETypePtr pEEType, int index, EETypePtr pEETypeInterface);
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhSetGenericInstantiation")]
@@ -428,14 +325,6 @@ namespace System.Runtime
         internal static extern IntPtr RhGetThreadLocalStorageForDynamicType(int index, int tlsStorageSize, int numTlsCells);
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhIsDynamicType")]
-        internal static unsafe extern bool RhIsDynamicType(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhHasCctor")]
-        internal static unsafe extern bool RhHasCctor(EETypePtr pEEType);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhResolveDispatchOnType")]
         internal static extern IntPtr RhResolveDispatchOnType(EETypePtr instanceType, EETypePtr interfaceType, ushort slot);
 
@@ -458,16 +347,8 @@ namespace System.Runtime
         internal static unsafe extern IntPtr RhGetDispatchMapForType(EETypePtr pEEType);
 
         //
-        // calls to runtime for process status
+        // Support for GC and HandleTable callouts.
         //
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhEnableShutdownFinalization")]
-        internal static extern void RhEnableShutdownFinalization(uint timeout);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhHasShutdownStarted")]
-        internal static extern bool RhHasShutdownStarted();
-
 
         internal enum GcRestrictedCalloutKind
         {
@@ -477,9 +358,6 @@ namespace System.Runtime
                                 // no handles have been cleared
         }
 
-        //
-        // Support for GC and HandleTable callouts.
-        //
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhRegisterGcCallout")]
         internal static extern bool RhRegisterGcCallout(GcRestrictedCalloutKind eKind, IntPtr pCalloutMethod);
@@ -507,9 +385,21 @@ namespace System.Runtime
         [RuntimeImport(RuntimeLibrary, "RhFindBlob")]
         internal static unsafe extern bool RhFindBlob(IntPtr hOsModule, uint blobId, byte** ppbBlob, uint* pcbBlob);
 
+#if CORERT
+        internal static uint RhGetLoadedModules(IntPtr[] resultArray)
+        {
+            IntPtr[] loadedModules = Internal.Runtime.CompilerHelpers.StartupCodeHelpers.Modules;
+            if (resultArray != null)
+            {
+                Array.Copy(loadedModules, resultArray, Math.Min(loadedModules.Length, resultArray.Length));
+            }
+            return (uint)loadedModules.Length;
+        }
+#else
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhGetLoadedModules")]
         internal static extern uint RhGetLoadedModules(IntPtr[] resultArray);
+#endif
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhGetModuleFromPointer")]
@@ -526,12 +416,21 @@ namespace System.Runtime
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhGetCodeTarget")]
         internal static extern IntPtr RhGetCodeTarget(IntPtr pCode);
+
+        [MethodImplAttribute(MethodImplOptions.InternalCall)]
+        [RuntimeImport(RuntimeLibrary, "RhGetJmpStubCodeTarget")]
+        internal static extern IntPtr RhGetJmpStubCodeTarget(IntPtr pCode);
+
         //
         // EH helpers
         //
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhGetModuleFileName")]
+#if PLATFORM_UNIX
+        internal static extern unsafe int RhGetModuleFileName(IntPtr moduleHandle, out byte* moduleName);
+#else
         internal static extern unsafe int RhGetModuleFileName(IntPtr moduleHandle, out char* moduleName);
+#endif
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhGetExceptionsForCurrentThread")]
@@ -799,16 +698,6 @@ namespace System.Runtime
             ELEMENT_TYPE_R8 = 0xd,
             ELEMENT_TYPE_I = 0x18,
             ELEMENT_TYPE_U = 0x19,
-        }
-
-        // Keep in sync with ProjectN\src\RH\src\rtm\System\Runtime\RuntimeExports.cs
-        internal enum RhEETypeClassification
-        {
-            Regular,                // Object, String, Int32
-            Array,                  // String[]
-            Generic,                // List<Int32>
-            GenericTypeDefinition,  // List<T>
-            UnmanagedPointer,       // void*
         }
 
         internal static RhCorElementTypeInfo GetRhCorElementTypeInfo(RuntimeImports.RhCorElementType elementType)

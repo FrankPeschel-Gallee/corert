@@ -19,8 +19,15 @@
   <PropertyGroup>
     <SkipCommonResourcesIncludes>true</SkipCommonResourcesIncludes>
   </PropertyGroup>
+  <PropertyGroup>
+    <ExcludeMscorlibFacade>true</ExcludeMscorlibFacade>
+    <ExcludeAssemblyInfoPartialFile>true</ExcludeAssemblyInfoPartialFile>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(IsProjectNLibrary)' != 'true'">
-    <DefineConstants>CORERT;$(DefineConstants)</DefineConstants>
+    <DefineConstants>CORERT;REAL_MULTIDIM_ARRAYS;$(DefineConstants)</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(IsProjectNLibrary)' == 'true'">
+    <DefineConstants>ENABLE_REFLECTION_TRACE;$(DefineConstants)</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition="'$(TargetsUnix)'=='true'">
     <DefineConstants>PLATFORM_UNIX;$(DefineConstants)</DefineConstants>
@@ -38,9 +45,6 @@
     <DefineConstants>ARM64;BIT64;$(DefineConstants)</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\..\Common\src\Internal\NativeFormat\NativeFormatReader.cs">
-      <Link>Internal\Runtime\CompilerHelpers\StartupCode\NativeFormatReader.cs</Link>
-    </Compile>
     <Compile Include="..\..\Common\src\System\SR.Core.cs">
       <Link>Resources\Common</Link>
     </Compile>
@@ -50,14 +54,23 @@
     <Compile Include="Internal\Diagnostics\StackTraceHelper.cs" />
   </ItemGroup>
   <ItemGroup Condition="'$(IsProjectNLibrary)' != 'true'">
+    <Compile Include="..\..\Common\src\Internal\NativeFormat\NativeFormatReader.cs">
+      <Link>Common\src\Internal\NativeFormat\NativeFormatReader.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Internal\Runtime\ModuleHeaders.cs" >
+      <Link>Internal\Runtime\ModuleHeaders.cs</Link>
+    </Compile>
     <Compile Include="Internal\Runtime\CompilerHelpers\StartupCode\LowLevelUTF8Encoding.cs" />
     <Compile Include="Internal\Runtime\CompilerHelpers\StartupCode\StartupCodeHelpers.cs" />
+    <Compile Include="Internal\Runtime\CompilerHelpers\StartupCode\StartupDebug.cs" />
+    <Compile Include="Internal\Runtime\CompilerHelpers\ArrayHelpers.cs" />
     <Compile Include="Internal\Runtime\CompilerHelpers\InteropHelpers.cs" />
     <Compile Include="Internal\Runtime\CompilerHelpers\LdTokenHelpers.cs" />
-    <Compile Include="Internal\Runtime\CompilerHelpers\MathHelpers.cs" />
-    <Compile Include="Internal\Runtime\CompilerHelpers\ThrowHelpers.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Internal\Runtime\EEType.Runtime.cs" />
+    <Compile Include="Internal\Runtime\CompilerHelpers\ThrowHelpers.cs" />
+    <Compile Include="Internal\Runtime\CompilerHelpers\MathHelpers.cs" />
     <Compile Include="Internal\Runtime\CompilerServices\FixupRuntimeTypeHandle.cs" />
     <Compile Include="Internal\Runtime\CompilerServices\FunctionPointerOps.cs" />
     <Compile Include="Internal\Runtime\CompilerServices\GenericMethodDescriptor.cs" />
@@ -78,6 +91,8 @@
   <ItemGroup Condition="'$(IsProjectNLibrary)' == 'true'">
     <Compile Include="Internal\Runtime\Augments\ReflectionTraceCallbacks.cs" />
     <Compile Include="Internal\Runtime\Augments\ReflectionTraceConnector.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <Compile Include="Internal\Reflection\Core\NonPortable\BlockedRuntimeTypeNameGenerator.cs" />
     <Compile Include="Internal\Reflection\Core\NonPortable\ConstructedGenericTypeKey.cs" />
     <Compile Include="Internal\Reflection\Core\NonPortable\RawRuntimeTypeHandleKey.cs" />
@@ -101,14 +116,19 @@
     <Compile Include="Internal\Reflection\Core\NonPortable\ReflectionCoreNonPortable.cs" />
     <Compile Include="Internal\Reflection\MetadataTransformedAttribute.cs" />
     <Compile Include="Internal\Reflection\ExplicitScopeAttribute.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(IsProjectNLibrary)' == 'true'">
     <Compile Include="Internal\Reflection\Tracing\ReflectionTrace.Public.cs" />
     <Compile Include="Internal\Reflection\Tracing\ReflectionTrace.Public.Events.cs" />
     <Compile Include="Internal\Reflection\Tracing\ReflectionTrace.Internal.cs" />
   </ItemGroup>
-  <ItemGroup Condition="'$(IsProjectNLibrary)' != 'true'">
+  <!--ItemGroup Condition="'$(IsProjectNLibrary)' != 'true'">
+    <Compile Include="..\..\Common\src\TypeSystem\Common\Utilities\LockFreeReaderHashtable.cs" >
+      <Link>TypeSystem\Common\Utilities\LockFreeReaderHashtable.cs</Link>
+    </Compile>
     <Compile Include="Internal\Reflection\CoreRT\RuntimeType.cs" />
     <Compile Include="Internal\Reflection\CoreRT\ReflectionCoreNonPortable.cs" />
-  </ItemGroup>
+  </ItemGroup-->
 
   <ItemGroup>
     <Compile Include="Internal\Reflection\Extensibility\ExtensibleType.cs" />
@@ -175,10 +195,10 @@
     <Compile Include="System\Globalization\HebrewCalendar.cs" />
     <Compile Include="System\Globalization\HebrewNumber.cs" />
     <Compile Include="System\Globalization\HijriCalendar.cs" />
-    <Compile Include="System\Globalization\HijriCalendar.Win32.cs" />
+    <Compile Include="System\Globalization\HijriCalendar.Windows.cs" />
     <Compile Include="System\Globalization\InternalGlobalizationHelper.cs" />
     <Compile Include="System\Globalization\JapaneseCalendar.cs" />
-    <Compile Include="System\Globalization\JapaneseCalendar.Win32.cs" />
+    <Compile Include="System\Globalization\JapaneseCalendar.Windows.cs" />
     <Compile Include="System\Globalization\KoreanCalendar.cs" />
     <Compile Include="System\Globalization\RegionInfo.cs" />
     <Compile Include="System\Globalization\FormatProvider.CultureAwareComparer.cs" />
@@ -343,6 +363,7 @@
     <Compile Include="System\Runtime\InteropServices\ComVisibleAttribute.cs" />
     <Compile Include="System\Runtime\InteropServices\DllImportAttribute.cs" />
     <Compile Include="System\Runtime\InteropServices\GCHandle.cs" />
+    <Compile Include="System\Runtime\InteropServices\GCHandleType.cs" />
     <Compile Include="System\Runtime\InteropServices\InteropExtensions.cs" />
     <Compile Include="System\Runtime\InteropServices\NativeCallableAttribute.cs" />
     <Compile Include="System\Runtime\InteropServices\SafeHandle.cs" />
@@ -358,7 +379,7 @@
     <Compile Include="System\String.cs" />
     <Compile Include="System\StringComparer.cs" />
     <Compile Include="System\Array.cs" />
-    <Compile Include="System\MDArray.cs" />
+    <Compile Include="System\MDArray.cs" Condition="'$(IsProjectNLibrary)' == 'true'"/>
     <Compile Include="System\IDisposable.cs" />
     <Compile Include="System\Delegate.cs" />
     <Compile Include="System\RuntimeTypeHandle.cs" />
@@ -388,6 +409,7 @@
     <Compile Include="System\Text\EncoderReplacementFallback.cs" />
     <Compile Include="System\Text\Encoding.cs" />
     <Compile Include="System\Text\EncodingData.cs" />
+    <Compile Include="System\Text\EncodingForwarder.cs" />
     <Compile Include="System\Text\EncodingNLS.cs" />
     <Compile Include="System\Text\EncodingProvider.cs" />
     <Compile Include="System\Text\EncodingTable.cs" />
@@ -410,6 +432,7 @@
     <Compile Include="System\Threading\Interlocked.cs" />
     <Compile Include="System\Threading\LazyInitializer.cs" />
     <Compile Include="System\Threading\LazyThreadSafetyMode.cs" />
+    <Compile Include="System\Threading\LockHolder.cs" />
     <Compile Include="System\Threading\ManualResetEvent.cs" />
     <Compile Include="System\Threading\Monitor.cs" />
     <Compile Include="System\Threading\Mutex.cs" />
@@ -462,13 +485,13 @@
   </ItemGroup>
   <!-- Windows is default build -->
   <ItemGroup Condition="'$(TargetsWindows)'=='true'">
-      <Compile Include="System\Globalization\CultureInfo.Win32.cs" />
-      <Compile Include="System\Globalization\CompareInfo.Win32.cs" />
-      <Compile Include="System\Globalization\CultureData.Win32.cs" />
-      <Compile Include="System\Globalization\TextInfo.Win32.cs" />
-      <Compile Include="System\Globalization\CalendarData.Win32.cs" />
-      <Compile Include="System\DateTime.Win32.cs" />
-      <Compile Include="System\Globalization\FormatProvider.FormatAndParse.Win32.cs" />
+      <Compile Include="System\Globalization\CultureInfo.Windows.cs" />
+      <Compile Include="System\Globalization\CompareInfo.Windows.cs" />
+      <Compile Include="System\Globalization\CultureData.Windows.cs" />
+      <Compile Include="System\Globalization\TextInfo.Windows.cs" />
+      <Compile Include="System\Globalization\CalendarData.Windows.cs" />
+      <Compile Include="System\DateTime.Windows.cs" />
+      <Compile Include="System\Globalization\FormatProvider.FormatAndParse.Windows.cs" />
       <Compile Include="..\..\Common\src\Interop\Windows\Interop.BOOL.cs">
         <Link>Interop\Windows\Interop.BOOL.cs</Link>
       </Compile>
@@ -480,16 +503,29 @@
         <Link>Interop\Windows\mincore\Interop.DateTime.cs</Link>
       </Compile>
 
-      <Compile Condition="'$(IsProjectNLibrary)' == 'true'" Include="System\Runtime\CommandLine.Win32.cs" />
+      <Compile Include="..\..\Common\src\Interop\Windows\mincore\Interop.MemAllocFree.cs" >
+        <Link>Interop\Windows\mincore\Interop.MemAllocFree.cs</Link>
+      </Compile>
+
+      <Compile Condition="'$(IsProjectNLibrary)' == 'true'" Include="System\Runtime\CommandLine.Windows.cs" />
       <Compile Condition="'$(IsProjectNLibrary)' == 'true'" Include="..\..\Common\src\Interop\Windows\mincore\Interop.CommandLine.cs" >
         <Link>Interop\Windows\mincore\Interop.CommandLine.cs</Link>
+      </Compile>      
+
+      <Compile Include="System\Environment.Windows.cs" />
+      <Compile Include="..\..\Common\src\Interop\Windows\mincore\Interop.GetTickCount64.cs" >
+        <Link>Interop\Windows\mincore\Interop.GetTickCount64.cs</Link>
       </Compile>
-      
+
       <Compile Condition="'$(IsProjectNLibrary)' == 'true'" Include="System\Environment.UWP.cs" />
 
       <Compile Condition="'$(IsProjectNLibrary)' != 'true'" Include="System\Environment.Win32.cs" />
       <Compile Condition="'$(IsProjectNLibrary)' != 'true'" Include="..\..\Common\src\Interop\Windows\mincore\Interop.Environment.cs" >
         <Link>Interop\Windows\mincore\Interop.Environment.cs</Link>
+      </Compile>
+
+      <Compile Condition="'$(IsProjectNLibrary)' != 'true'" Include="..\..\Common\src\Interop\Windows\mincore\Interop.DynamicLoad.cs" >
+        <Link>Interop\Windows\mincore\Interop.DynamicLoad.cs</Link>
       </Compile>
       
   </ItemGroup>
@@ -522,7 +558,7 @@
       <Compile Include="..\..\Common\src\Interop\Windows\mincore\Interop.CoCreateGuid.cs" >
           <Link>Interop\Windows\mincore\Interop.CoCreateGuid.cs</Link>
       </Compile>
-</ItemGroup>
+  </ItemGroup>
   <ItemGroup Condition="'$(TargetsUnix)'=='true'">
     <Compile Include="System\Globalization\CultureInfo.Dummy.cs" />
     <Compile Include="System\Globalization\CompareInfo.Dummy.cs" />
@@ -535,6 +571,12 @@
     <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.DateTime.cs" >
       <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.DateTime.cs</Link>
     </Compile>
+    <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.MemAllocFree.cs" >
+      <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.MemAllocFree.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.GetTickCount64.cs" >
+      <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.GetTickCount64.cs</Link>
+    </Compile>
     <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.Environment.cs" >
       <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.Environment.cs</Link>
     </Compile>
@@ -543,6 +585,9 @@
     </Compile>
     <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.FormatProvider.FormatAndParse.cs" >
       <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.FormatProvider.FormatAndParse.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.DynamicLoad.cs" >
+      <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.DynamicLoad.cs</Link>
     </Compile>
   </ItemGroup>
   <ItemGroup>
@@ -597,10 +642,16 @@
     <Compile Include="..\..\Common\src\System\__HResults.cs" >
       <Link>System\__HResults.cs</Link>
     </Compile>
-    <Compile Include="..\..\Common\src\TypeSystem\Common\Utilities\LockFreeReaderHashtable.cs" >
-      <Link>TypeSystem\Common\Utilities\LockFreeReaderHashtable.cs</Link>
+    <Compile Include="..\..\Common\src\Internal\NativeFormat\NativeFormatReader.Primitives.cs">
+      <Link>Common\src\Internal\NativeFormat\NativeFormatReader.Primitives.cs</Link>
     </Compile>
-    <Compile Include="CoverageSupport.cs" />
+    <Compile Include="..\..\Common\src\Internal\Runtime\EEType.cs" >
+      <Link>Internal\Runtime\EEType.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Internal\Runtime\EEType.Constants.cs" >
+      <Link>Internal\Runtime\EEType.Constants.cs</Link>
+    </Compile>
+    <Compile Condition="'$(IsProjectNLibrary)' == 'true'" Include="CoverageSupport.cs" />
   </ItemGroup>
   <!-- For now, link Runtime.Base into System.Private.CoreLib for CoreRT until there is proper multifile build -->
   <PropertyGroup Condition="'$(IsProjectNLibrary)' != 'true' and '$(RazzleToolPath)' == ''">
@@ -619,17 +670,14 @@
     <Compile Include="..\..\Runtime.Base\src\System\Runtime\GCStress.cs" >
       <Link>Runtime.Base\src\System\Runtime\GCStress.cs</Link>
     </Compile>
-    <Compile Include="..\..\Runtime.Base\src\System\Runtime\BinderIntrinsics.cs" >
-      <Link>Runtime.Base\src\System\Runtime\BinderIntrinsics.cs</Link>
-    </Compile>
     <Compile Include="..\..\Runtime.Base\src\System\Runtime\__Finalizer.cs" >
       <Link>Runtime.Base\src\System\Runtime\__Finalizer.cs</Link>
     </Compile>
     <Compile Include="..\..\Runtime.Base\src\System\Runtime\CalliIntrinsics.cs" >
       <Link>Runtime.Base\src\System\Runtime\CalliIntrinsics.cs</Link>
     </Compile>
-    <Compile Include="..\..\Runtime.Base\src\System\Runtime\EEType.cs" >
-      <Link>Runtime.Base\src\System\Runtime\EEType.cs</Link>
+    <Compile Include="..\..\Runtime.Base\src\System\Runtime\EEType.Runtime.cs" >
+      <Link>Runtime.Base\src\System\Runtime\EEType.Runtime.cs</Link>
     </Compile>
     <Compile Include="..\..\Runtime.Base\src\System\Runtime\ExceptionHandling.cs" >
       <Link>Runtime.Base\src\System\Runtime\ExceptionHandling.cs</Link>
@@ -649,11 +697,11 @@
     <Compile Include="..\..\Runtime.Base\src\System\Runtime\CompilerServices\ManuallyManagedAttribute.cs" >
       <Link>Runtime.Base\src\System\Runtime\CompilerServices\ManuallyManagedAttribute.cs</Link>
     </Compile>
+    <Compile Include="..\..\Runtime.Base\src\System\Runtime\InteropServices\UnsafeGCHandle.cs" >
+      <Link>Runtime.Base\src\System\Runtime\InteropServices\UnsafeGCHandle.cs</Link>
+    </Compile>
     <Compile Include="..\..\Runtime.Base\src\RhBaseName.cs" >
       <Link>Runtime.Base\src\RhBaseName.cs</Link>
-    </Compile>
-    <Compile Include="..\..\Common\src\Internal\Runtime\EEType.Constants.cs" >
-      <Link>Internal\Runtime\EEType.Constants.cs</Link>
     </Compile>
   </ItemGroup>
   <ItemGroup Condition="'$(InPlaceRuntime)' == 'true'">
@@ -665,20 +713,4 @@
     </EmbeddedResource>
   </ItemGroup>
   <Import Project="$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), dir.targets))\dir.targets" />
-  <!-- 
-  	Workarounds https://github.com/dotnet/buildtools/pull/380 can be consumed.
-
-  	Once this that buildtools version is updated with that PR then these workarounds can be 
-  	turned into the following properties at the top of this project file.
-
-  <PropertyGroup>
-	<ExcludeMscorlibFacade>true</ExcludeMscorlibFacade>
-	<ExcludeAssemblyInfoPartialFile>true</ExcludeAssemblyInfoPartialFile>
-  </PropertyGroup>
-  -->
-  <PropertyGroup>
-    <!-- Exclude AssemblyInfoPartialFile -->
-    <AssemblyInfoPartialFile></AssemblyInfoPartialFile>
-  </PropertyGroup>
-  <Target Name="AddDesignTimeFacadeReferences" />
 </Project>

@@ -42,7 +42,6 @@ namespace System.Threading
 
         public SafeWaitHandle SafeWaitHandle
         {
-            [System.Security.SecurityCritical]
             get
             {
                 if (waitHandle == null)
@@ -52,7 +51,6 @@ namespace System.Threading
                 return waitHandle;
             }
 
-            [System.Security.SecurityCritical]
             set
             { waitHandle = value; }
         }
@@ -83,13 +81,11 @@ namespace System.Threading
             return WaitOne(-1);
         }
 
-        [System.Security.SecuritySafeCritical]  // auto-generated
         private bool WaitOne(long timeout)
         {
             return InternalWaitOne(waitHandle, timeout);
         }
 
-        [System.Security.SecurityCritical]  // auto-generated
         internal static bool InternalWaitOne(SafeWaitHandle waitableSafeHandle, long millisecondsTimeout)
         {
             if (waitableSafeHandle == null)
@@ -112,7 +108,6 @@ namespace System.Threading
         }
 
 #if FEATURE_LEGACYNETCFFAS
-        [System.Security.SecurityCritical]
         internal bool WaitOneWithoutFAS()
         {
             // version of waitone without fast application switch (FAS) support
@@ -176,12 +171,11 @@ namespace System.Threading
             }
         }
 
-        [System.Security.SecuritySafeCritical]  // auto-generated
         public static bool WaitAll(WaitHandle[] waitHandles, int millisecondsTimeout)
         {
             if (waitHandles == null)
             {
-                throw new ArgumentNullException(SR.ArgumentNull_Waithandles);
+                throw new ArgumentNullException("waitHandles", SR.ArgumentNull_Waithandles);
             }
             if (waitHandles.Length == 0)
             {
@@ -194,7 +188,7 @@ namespace System.Threading
                 // in CoreCLR, and ArgumentNullException in the desktop CLR.  This is ugly, but so is breaking
                 // user code.
                 //
-                throw new ArgumentNullException(SR.Argument_EmptyWaithandleArray);
+                throw new ArgumentNullException("waitHandles", SR.Argument_EmptyWaithandleArray);
             }
             if (waitHandles.Length > LowLevelThread.MAX_WAITHANDLES)
             {
@@ -211,7 +205,7 @@ namespace System.Threading
                 WaitHandle waitHandle = waitHandles[i];
 
                 if (waitHandle == null)
-                    throw new ArgumentNullException(SR.ArgumentNull_ArrayElement);
+                    throw new ArgumentNullException("waitHandles[" + i + "]", SR.ArgumentNull_ArrayElement);
 
                 internalWaitHandles[i] = waitHandle;
             }
@@ -262,12 +256,11 @@ namespace System.Threading
         ** signalled or timeout milliseonds have elapsed.
         ========================================================================*/
 
-        [System.Security.SecuritySafeCritical]  // auto-generated
         public static int WaitAny(WaitHandle[] waitHandles, int millisecondsTimeout)
         {
             if (waitHandles == null)
             {
-                throw new ArgumentNullException(SR.ArgumentNull_Waithandles);
+                throw new ArgumentNullException("waitHandles", SR.ArgumentNull_Waithandles);
             }
             if (waitHandles.Length == 0)
             {
@@ -288,7 +281,7 @@ namespace System.Threading
                 WaitHandle waitHandle = waitHandles[i];
 
                 if (waitHandle == null)
-                    throw new ArgumentNullException(SR.ArgumentNull_ArrayElement);
+                    throw new ArgumentNullException("waitHandles[" + i + "]", SR.ArgumentNull_ArrayElement);
 
                 internalWaitHandles[i] = waitHandle;
             }
@@ -347,7 +340,6 @@ namespace System.Threading
             throw new AbandonedMutexException(location, handle);
         }
 
-        [System.Security.SecuritySafeCritical]  // auto-generated
         protected virtual void Dispose(bool explicitDisposing)
         {
             if (waitHandle != null)

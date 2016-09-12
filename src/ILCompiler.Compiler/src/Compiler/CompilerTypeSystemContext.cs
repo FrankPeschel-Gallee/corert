@@ -11,54 +11,20 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 
-using ILCompiler.SymbolReader;
-
 using Internal.TypeSystem;
 using Internal.TypeSystem.Ecma;
 using Internal.IL;
 
 namespace ILCompiler
 {
-    public class CompilerTypeSystemContext : TypeSystemContext, IMetadataStringDecoderProvider
+    public class CompilerTypeSystemContext : MetadataTypeSystemContext, IMetadataStringDecoderProvider
     {
-        private static readonly string[] s_wellKnownTypeNames = new string[] {
-            "Void",
-            "Boolean",
-            "Char",
-            "SByte",
-            "Byte",
-            "Int16",
-            "UInt16",
-            "Int32",
-            "UInt32",
-            "Int64",
-            "UInt64",
-            "IntPtr",
-            "UIntPtr",
-            "Single",
-            "Double",
-
-            "ValueType",
-            "Enum",
-            "Nullable`1",
-
-            "Object",
-            "String",
-            "Array",
-            "MulticastDelegate",
-
-            "RuntimeTypeHandle",
-            "RuntimeMethodHandle",
-            "RuntimeFieldHandle",
-
-            "Exception",
-        };
-
-        private MetadataType[] _wellKnownTypes = new MetadataType[s_wellKnownTypeNames.Length];
-
         private MetadataFieldLayoutAlgorithm _metadataFieldLayoutAlgorithm = new CompilerMetadataFieldLayoutAlgorithm();
         private MetadataRuntimeInterfacesAlgorithm _metadataRuntimeInterfacesAlgorithm = new MetadataRuntimeInterfacesAlgorithm();
         private ArrayOfTRuntimeInterfacesAlgorithm _arrayOfTRuntimeInterfacesAlgorithm;
+        private MetadataVirtualMethodAlgorithm _virtualMethodAlgorithm = new MetadataVirtualMethodAlgorithm();
+        private CachingVirtualMethodEnumerationAlgorithm _virtualMethodEnumAlgorithm = new CachingVirtualMethodEnumerationAlgorithm();
+        private DelegateVirtualMethodEnumerationAlgorithm _delegateVirtualMethodEnumAlgorithm = new DelegateVirtualMethodEnumerationAlgorithm();
 
         private MetadataStringDecoder _metadataStringDecoder;
 
@@ -69,8 +35,6 @@ namespace ILCompiler
 
             public EcmaModule Module;
             public MemoryMappedViewAccessor MappedViewAccessor;
-
-            public PdbSymbolReader PdbReader;
         }
 
         private class ModuleHashtable : LockFreeReaderHashtable<EcmaModule, ModuleData>
@@ -127,6 +91,31 @@ namespace ILCompiler
         }
         private SimpleNameHashtable _simpleNameHashtable = new SimpleNameHashtable();
 
+        private class DelegateInfoHashtable : LockFreeReaderHashtable<TypeDesc, DelegateInfo>
+        {
+            protected override int GetKeyHashCode(TypeDesc key)
+            {
+                return key.GetHashCode();
+            }
+            protected override int GetValueHashCode(DelegateInfo value)
+            {
+                return value.Type.GetHashCode();
+            }
+            protected override bool CompareKeyToValue(TypeDesc key, DelegateInfo value)
+            {
+                return Object.ReferenceEquals(key, value.Type);
+            }
+            protected override bool CompareValueToValue(DelegateInfo value1, DelegateInfo value2)
+            {
+                return Object.ReferenceEquals(value1.Type, value2.Type);
+            }
+            protected override DelegateInfo CreateValueFromKey(TypeDesc key)
+            {
+                return new DelegateInfo(key);
+            }
+        }
+        private DelegateInfoHashtable _delegateInfoHashtable = new DelegateInfoHashtable();
+
         public CompilerTypeSystemContext(TargetDetails details)
             : base(details)
         {
@@ -142,27 +131,6 @@ namespace ILCompiler
         {
             get;
             set;
-        }
-
-        public void SetSystemModule(EcmaModule systemModule)
-        {
-            InitializeSystemModule(systemModule);
-
-            // Sanity check the name table
-            Debug.Assert(s_wellKnownTypeNames[(int)WellKnownType.MulticastDelegate - 1] == "MulticastDelegate");
-
-            // Initialize all well known types - it will save us from checking the name for each loaded type
-            for (int typeIndex = 0; typeIndex < _wellKnownTypes.Length; typeIndex++)
-            {
-                MetadataType type = systemModule.GetKnownType("System", s_wellKnownTypeNames[typeIndex]);
-                type.SetWellKnownType((WellKnownType)(typeIndex + 1));
-                _wellKnownTypes[typeIndex] = type;
-            }
-        }
-
-        public override DefType GetWellKnownType(WellKnownType wellKnownType)
-        {
-            return _wellKnownTypes[(int)wellKnownType - 1];
         }
 
         public override ModuleDesc ResolveAssembly(System.Reflection.AssemblyName name, bool throwIfNotFound)
@@ -208,12 +176,15 @@ namespace ILCompiler
             // well for us since it can make IL access very slow (call to OS for each method IL query). We will map the file
             // ourselves to get the desired performance characteristics reliably.
 
+            FileStream fileStream = null;
             MemoryMappedFile mappedFile = null;
             MemoryMappedViewAccessor accessor = null;
-
             try
             {
-                mappedFile = MemoryMappedFile.CreateFromFile(filePath, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+                // Create stream because CreateFromFile(string, ...) uses FileShare.None which is too strict
+                fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, false);
+                mappedFile = MemoryMappedFile.CreateFromFile(
+                    fileStream, null, fileStream.Length, MemoryMappedFileAccess.Read, HandleInheritability.None, true);
                 accessor = mappedFile.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
 
                 var safeBuffer = accessor.SafeMemoryMappedViewHandle;
@@ -232,17 +203,21 @@ namespace ILCompiler
                     accessor.Dispose();
                 if (mappedFile != null)
                     mappedFile.Dispose();
+                if (fileStream != null)
+                    fileStream.Dispose();
             }
         }
 
         private EcmaModule AddModule(string filePath, string expectedSimpleName)
         {
             MemoryMappedViewAccessor mappedViewAccessor = null;
+            PdbSymbolReader pdbReader = null;
             try
             {
                 PEReader peReader = OpenPEFile(filePath, out mappedViewAccessor);
+                pdbReader = OpenAssociatedSymbolFile(filePath);
 
-                EcmaModule module = new EcmaModule(this, peReader);
+                EcmaModule module = EcmaModule.Create(this, peReader, pdbReader);
 
                 MetadataReader metadataReader = module.MetadataReader;
                 string simpleName = metadataReader.GetString(metadataReader.GetAssemblyDefinition().Name);
@@ -268,12 +243,10 @@ namespace ILCompiler
                         return actualModuleData.Module;
                     }
                     mappedViewAccessor = null; // Ownership has been transfered
+                    pdbReader = null; // Ownership has been transferred
 
                     _moduleHashtable.AddOrGetExisting(moduleData);
                 }
-
-                // TODO: Thread-safety for symbol reading
-                InitializeSymbolReader(moduleData);
 
                 return module;
             }
@@ -281,7 +254,14 @@ namespace ILCompiler
             {
                 if (mappedViewAccessor != null)
                     mappedViewAccessor.Dispose();
+                if (pdbReader != null)
+                    pdbReader.Dispose();
             }
+        }
+
+        public DelegateInfo GetDelegateInfo(TypeDesc delegateType)
+        {
+            return _delegateInfoHashtable.GetOrCreateValue(delegateType);
         }
 
         public override FieldLayoutAlgorithm GetLayoutAlgorithmForType(DefType type)
@@ -289,7 +269,7 @@ namespace ILCompiler
             return _metadataFieldLayoutAlgorithm;
         }
 
-        public override RuntimeInterfacesAlgorithm GetRuntimeInterfacesAlgorithmForNonPointerArrayType(ArrayType type)
+        protected override RuntimeInterfacesAlgorithm GetRuntimeInterfacesAlgorithmForNonPointerArrayType(ArrayType type)
         {
             if (_arrayOfTRuntimeInterfacesAlgorithm == null)
             {
@@ -298,9 +278,41 @@ namespace ILCompiler
             return _arrayOfTRuntimeInterfacesAlgorithm;
         }
 
-        public override RuntimeInterfacesAlgorithm GetRuntimeInterfacesAlgorithmForMetadataType(MetadataType type)
+        protected override RuntimeInterfacesAlgorithm GetRuntimeInterfacesAlgorithmForDefType(DefType type)
         {
             return _metadataRuntimeInterfacesAlgorithm;
+        }
+
+        public override VirtualMethodAlgorithm GetVirtualMethodAlgorithmForType(TypeDesc type)
+        {
+            Debug.Assert(!type.IsArray, "Wanted to call GetClosestMetadataType?");
+
+            return _virtualMethodAlgorithm;
+        }
+
+        public override VirtualMethodEnumerationAlgorithm GetVirtualMethodEnumerationAlgorithmForType(TypeDesc type)
+        {
+            Debug.Assert(!type.IsArray, "Wanted to call GetClosestMetadataType?");
+
+            if (type.IsDelegate)
+                return _delegateVirtualMethodEnumAlgorithm;
+
+            return _virtualMethodEnumAlgorithm;
+        }
+
+        protected override Instantiation ConvertInstantiationToCanonForm(Instantiation instantiation, CanonicalFormKind kind, out bool changed)
+        {
+            return RuntimeDeterminedCanonicalizationAlgorithm.ConvertInstantiationToCanonForm(instantiation, kind, out changed);
+        }
+
+        protected override TypeDesc ConvertToCanon(TypeDesc typeToConvert, CanonicalFormKind kind)
+        {
+            return RuntimeDeterminedCanonicalizationAlgorithm.ConvertToCanon(typeToConvert, kind);
+        }
+
+        protected override TypeDesc ConvertToCanon(TypeDesc typeToConvert, ref CanonicalFormKind kind)
+        {
+            return RuntimeDeterminedCanonicalizationAlgorithm.ConvertToCanon(typeToConvert, ref kind);
         }
 
         public MetadataStringDecoder GetMetadataStringDecoder()
@@ -314,75 +326,23 @@ namespace ILCompiler
         // Symbols
         //
 
-        private void InitializeSymbolReader(ModuleData moduleData)
+        private PdbSymbolReader OpenAssociatedSymbolFile(string peFilePath)
         {
             // Assume that the .pdb file is next to the binary
-            var pdbFilename = Path.ChangeExtension(moduleData.FilePath, ".pdb");
+            var pdbFilename = Path.ChangeExtension(peFilePath, ".pdb");
 
             if (!File.Exists(pdbFilename))
-                return;
+                return null;
 
             // Try to open the symbol file as portable pdb first
             PdbSymbolReader reader = PortablePdbSymbolReader.TryOpen(pdbFilename, GetMetadataStringDecoder());
             if (reader == null)
             {
                 // Fallback to the diasymreader for non-portable pdbs
-                reader = UnmanagedPdbSymbolReader.TryOpenSymbolReaderForMetadataFile(moduleData.FilePath);
+                reader = UnmanagedPdbSymbolReader.TryOpenSymbolReaderForMetadataFile(peFilePath);
             }
 
-            moduleData.PdbReader = reader;
-        }
-
-        public IEnumerable<ILSequencePoint> GetSequencePointsForMethod(MethodDesc method)
-        {
-            EcmaMethod ecmaMethod = method.GetTypicalMethodDefinition() as EcmaMethod;
-            if (ecmaMethod == null)
-                return null;
-
-            ModuleData moduleData;
-            _moduleHashtable.TryGetValue(ecmaMethod.Module, out moduleData);
-            Debug.Assert(moduleData != null);
-
-            if (moduleData.PdbReader == null)
-                return null;
-
-            return moduleData.PdbReader.GetSequencePointsForMethod(MetadataTokens.GetToken(ecmaMethod.Handle));
-        }
-
-        public IEnumerable<ILLocalVariable> GetLocalVariableNamesForMethod(MethodDesc method)
-        {
-            EcmaMethod ecmaMethod = method.GetTypicalMethodDefinition() as EcmaMethod;
-            if (ecmaMethod == null)
-                return null;
-
-            ModuleData moduleData;
-            _moduleHashtable.TryGetValue(ecmaMethod.Module, out moduleData);
-            Debug.Assert(moduleData != null);
-
-            if (moduleData.PdbReader == null)
-                return null;
-
-            return moduleData.PdbReader.GetLocalVariableNamesForMethod(MetadataTokens.GetToken(ecmaMethod.Handle));
-        }
-
-        public IEnumerable<string> GetParameterNamesForMethod(MethodDesc method)
-        {
-            EcmaMethod ecmaMethod = method.GetTypicalMethodDefinition() as EcmaMethod;
-            if (ecmaMethod == null)
-                yield break;
-
-            ParameterHandleCollection parameters = ecmaMethod.MetadataReader.GetMethodDefinition(ecmaMethod.Handle).GetParameters();
-
-            if (!ecmaMethod.Signature.IsStatic)
-            {
-                yield return "_this";
-            }
-
-            foreach (var parameterHandle in parameters)
-            {
-                Parameter p = ecmaMethod.MetadataReader.GetParameter(parameterHandle);
-                yield return ecmaMethod.MetadataReader.GetString(p.Name);
-            }
+            return reader;
         }
     }
 }

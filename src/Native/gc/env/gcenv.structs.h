@@ -14,20 +14,6 @@ struct GCSystemInfo
     uint32_t dwAllocationGranularity;
 };
 
-// An 'abstract' definition of Windows MEMORYSTATUSEX.  In practice, the only difference is the missing struct size
-// field and one field that Windows documents to always be 0.  If additional information is available on other OSes,
-// this information should be surfaced through this structure as additional fields that the GC may optionally depend on.
-struct GCMemoryStatus
-{
-    uint32_t dwMemoryLoad;
-    uint64_t ullTotalPhys;
-    uint64_t ullAvailPhys;
-    uint64_t ullTotalPageFile;
-    uint64_t ullAvailPageFile;
-    uint64_t ullTotalVirtual;
-    uint64_t ullAvailVirtual;
-};
-
 typedef void * HANDLE;
 
 #ifdef PLATFORM_UNIX
@@ -101,19 +87,6 @@ public:
 #endif // PLATFORM_UNIX
 
 #ifndef _INC_WINDOWS
-
-typedef union _LARGE_INTEGER {
-    struct {
-#if BIGENDIAN
-        int32_t HighPart;
-        uint32_t LowPart;
-#else
-        uint32_t LowPart;
-        int32_t HighPart;
-#endif
-    } u;
-    int64_t QuadPart;
-} LARGE_INTEGER, *PLARGE_INTEGER;
 
 #ifdef PLATFORM_UNIX
 

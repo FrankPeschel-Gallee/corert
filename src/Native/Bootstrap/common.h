@@ -20,6 +20,7 @@
 #include <assert.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <math.h>
 
 #include <new>
 
@@ -27,26 +28,26 @@
 #include <pthread.h>
 #endif
 
-#ifdef _MSC_VER
-#pragma warning(disable:4200) // zero-sized array
-#endif
-
 using namespace std;
 
 class MethodTable;
 class Object;
+
+#ifdef _MSC_VER
+#define __NORETURN __declspec(noreturn)
+#else
+#define __NORETURN __attribute((noreturn))
+#endif
 
 int __initialize_runtime();
 void __shutdown_runtime();
 
 extern "C" Object * __allocate_object(MethodTable * pMT);
 extern "C" Object * __allocate_array(size_t elements, MethodTable * pMT);
-extern "C" Object * RhNewMDArray(MethodTable * pMT, int32_t rank, ...);
 extern "C" Object * __castclass(void * obj, MethodTable * pMT);
 extern "C" Object * __isinst(void * obj, MethodTable * pMT);
-extern "C" void __declspec(noreturn) __throw_exception(void * pEx);
+extern "C" __NORETURN void __throw_exception(void * pEx);
 
-Object * __allocate_string(int32_t len);
 Object * __load_string_literal(const char * string);
 
 extern "C" void __range_check_fail();
@@ -80,28 +81,6 @@ struct ReversePInvokeFrame
 void __reverse_pinvoke(ReversePInvokeFrame* pRevFrame);
 void __reverse_pinvoke_return(ReversePInvokeFrame* pRevFrame);
 
-struct StaticGcDesc
-{
-    struct GCSeries
-    {
-        uint32_t m_size;
-        uint32_t m_startOffset;
-    };
-
-    uint32_t m_numSeries;
-    GCSeries m_series[0];
-};
-
-struct SimpleModuleHeader
-{
-    void* m_pStaticsGcDataSection;
-    StaticGcDesc* m_pStaticsGcInfo;
-    StaticGcDesc* m_pThreadStaticsGcInfo;
-};
-
-void __register_module(SimpleModuleHeader* pModule);
-
-// TODO: this might be wrong...
 typedef size_t UIntNative;
 
 inline bool IS_ALIGNED(UIntNative val, UIntNative alignment)
@@ -122,12 +101,5 @@ inline bool IS_ALIGNED(T* val, UIntNative alignment)
 #define AlignBaseSize(s) ((s < RAW_MIN_OBJECT_SIZE) ? RAW_MIN_OBJECT_SIZE : ((s + (sizeof(void*)-1) & ~(sizeof(void*)-1))))
 
 #define ARRAY_BASE (2*sizeof(void*))
-
-#ifdef _MSC_VER
-// Warnings disabled for auto-generated cpp code
-#pragma warning(disable:4102) // unreferenced label
-#pragma warning(disable:4244) // possible loss of data
-#pragma warning(disable:4717) // recursive on all control paths
-#endif
 
 #endif // __COMMON_H

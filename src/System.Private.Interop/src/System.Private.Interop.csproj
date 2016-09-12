@@ -8,25 +8,11 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants>$(DefineConstants);TARGET_CORE_API_SET</DefineConstants>
   </PropertyGroup>
+
   <!-- Default configurations to help VS understand the options -->
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x86' ">
-    <PlatformTarget>x86</PlatformTarget>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x86' ">
-    <PlatformTarget>x86</PlatformTarget>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|amd64' ">
-    <PlatformTarget>x64</PlatformTarget>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|amd64' ">
-    <PlatformTarget>x64</PlatformTarget>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|arm' ">
-    <PlatformTarget>arm</PlatformTarget>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|arm' ">
-    <PlatformTarget>arm</PlatformTarget>
-  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|AnyCPU'" />
+
   <ItemGroup>
     <ProjectReference Include="..\..\AotPackageReference\AotPackageReference.depproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
@@ -65,6 +51,9 @@
   <ItemGroup>
     <Compile Include="..\..\Common\src\Internal\NativeFormat\NativeFormatReader.cs" >
       <Link>Internal\NativeFormat\NativeFormatReader.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Internal\NativeFormat\NativeFormatReader.Primitives.cs" >
+      <Link>Internal\NativeFormat\NativeFormatReader.Primitives.cs</Link>
     </Compile>
     <Compile Include="..\..\Common\src\Internal\NativeFormat\NativeFormatReader.String.cs" >
       <Link>Internal\NativeFormat\NativeFormatReader.String.cs</Link>
@@ -160,6 +149,7 @@
     <Compile Include="System\Runtime\InteropServices\Variant.cs" />
     <Compile Include="System\Runtime\InteropServices\VariantWrapper.cs" />
     <Compile Include="System\Runtime\InteropServices\ComWeakReferenceHelpers.cs" />
+    <Compile Include="Interop\Interop.Memory.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -171,24 +161,49 @@
   <!-- TODO: Unix port https://github.com/dotnet/corert/issues/669
   <ItemGroup Condition=" '$(TargetsWindows)' == 'true' ">
   -->
+
   <ItemGroup>
-    <Compile Include="Interop\Interop.Memory.Windows.cs" />
     <Compile Include="Interop\Interop.String.Windows.cs" />
     <Compile Include="Interop\Interop.WinRT.cs" />
     <Compile Include="Interop\Interop.Localization.Windows.cs" />
     <Compile Include="Interop\Interop.Sync.Windows.cs" />
     <Compile Include="Interop\Interop.COM.Windows.cs" />
     <Compile Include="Interop\Interop.Common.Windows.cs" /> 
-    <Compile Include="System\__HResults.cs" />       
+    <Compile Include="System\__HResults.cs" />
+  </ItemGroup>
+  
+  <ItemGroup Condition="'$(TargetsWindows)' == 'true' and '$(IsProjectKLibrary)' != 'true'">
+    <Compile Include="..\..\Common\src\Interop\Windows\mincore\Interop.MemAllocFree.cs">
+      <Link>Interop\Windows\mincore\Interop.MemAllocFree.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Interop\Windows\mincore\Interop.MemReAlloc.cs">
+      <Link>Interop\Windows\mincore\Interop.MemReAlloc.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Interop\Windows\mincore\Interop.MemAllocWithZeroInitializeNoThrow.cs">
+      <Link>Interop\Windows\mincore\Interop.MemAllocWithZeroInitializeNoThrow.cs</Link>
+    </Compile>
   </ItemGroup>
 
   <!-- TODO: Unix port https://github.com/dotnet/corert/issues/669
   <ItemGroup Condition=" '$(TargetsWindows)' != 'true' ">
-    <Compile Include="Interop\Interop.Memory.Unix.cs" />
     <Compile Include="Interop\Interop.String.Unix.cs" />
     <Compile Include="Interop\Interop.Common.Unix.cs" />
-  </ItemGroup>
   -->
+
+  <ItemGroup Condition="'$(TargetsUnix)'=='true' and '$(IsProjectKLibrary)' != 'true'">
+    <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.MemAllocFree.cs">
+      <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.MemAllocFree.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.MemReAlloc.cs">
+      <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.MemReAlloc.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.MemAllocWithZeroInitializeNoThrow.cs">
+      <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.MemAllocWithZeroInitializeNoThrow.cs</Link>
+    </Compile>
+    <Compile Include="..\..\Common\src\Interop\Unix\System.Private.CoreLib.Native\Interop.Libraries.cs">
+      <Link>Interop\Unix\System.Private.CoreLib.Native\Interop.Libraries.cs</Link>
+    </Compile>
+  </ItemGroup>
 
   <Import Project="$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), dir.targets))\dir.targets" />
 </Project>

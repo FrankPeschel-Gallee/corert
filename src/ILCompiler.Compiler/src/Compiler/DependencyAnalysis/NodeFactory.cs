@@ -5,9 +5,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+
 using ILCompiler.DependencyAnalysisFramework;
+
 using Internal.TypeSystem;
-using Internal.TypeSystem.Ecma;
 using Internal.Runtime;
 using Internal.IL;
 
@@ -18,14 +19,18 @@ namespace ILCompiler.DependencyAnalysis
         private TargetDetails _target;
         private CompilerTypeSystemContext _context;
         private bool _cppCodeGen;
+        private CompilationModuleGroup _compilationModuleGroup;
 
-        public NodeFactory(CompilerTypeSystemContext context, bool cppCodeGen)
+        public NodeFactory(CompilerTypeSystemContext context, TypeInitialization typeInitManager, CompilationModuleGroup compilationModuleGroup, bool cppCodeGen)
         {
             _target = context.Target;
             _context = context;
             _cppCodeGen = cppCodeGen;
-            DispatchMapTable = new InterfaceDispatchMapTableNode(this.Target);
+            _compilationModuleGroup = compilationModuleGroup;
+            TypeInitializationManager = typeInitManager;
             CreateNodeCaches();
+
+            MetadataManager = new MetadataGeneration();
         }
 
         public TargetDetails Target
@@ -34,6 +39,24 @@ namespace ILCompiler.DependencyAnalysis
             {
                 return _target;
             }
+        }
+
+        public CompilationModuleGroup CompilationModuleGroup
+        {
+            get
+            {
+                return _compilationModuleGroup;
+            }
+        }
+
+        public TypeInitialization TypeInitializationManager
+        {
+            get; private set;
+        }
+
+        public MetadataGeneration MetadataManager
+        {
+            get; private set;
         }
 
         private struct NodeCache<TKey, TValue>
@@ -67,25 +90,45 @@ namespace ILCompiler.DependencyAnalysis
 
         private void CreateNodeCaches()
         {
-            _typeSymbols = new NodeCache<TypeDesc, EETypeNode>((TypeDesc type) =>
+            _typeSymbols = new NodeCache<TypeDesc, IEETypeNode>((TypeDesc type) =>
             {
-                return new EETypeNode(type, false);
+                if (_compilationModuleGroup.ContainsType(type))
+                {
+                    return new EETypeNode(type, false);
+                }
+                else
+                {
+                    return new ExternEETypeSymbolNode(type);
+                }
             });
 
-            _constructedTypeSymbols = new NodeCache<TypeDesc, EETypeNode>((TypeDesc type) =>
+            _constructedTypeSymbols = new NodeCache<TypeDesc, IEETypeNode>((TypeDesc type) =>
             {
-                return new EETypeNode(type, true);
+                if (_compilationModuleGroup.ContainsType(type))
+                {
+                    return new EETypeNode(type, true);
+                }
+                else
+                {
+                    return new ExternEETypeSymbolNode(type);
+                }
             });
-
-
+            
             _nonGCStatics = new NodeCache<MetadataType, NonGCStaticsNode>((MetadataType type) =>
             {
-                return new NonGCStaticsNode(type);
+                return new NonGCStaticsNode(type, this);
             });
 
             _GCStatics = new NodeCache<MetadataType, GCStaticsNode>((MetadataType type) =>
             {
-                return new GCStaticsNode(type, this);
+                return new GCStaticsNode(type);
+            });
+
+            _GCStaticIndirectionNodes = new NodeCache<MetadataType, EmbeddedObjectNode>((MetadataType type) =>
+            {
+                ISymbolNode gcStaticsNode = TypeGCStaticsSymbol(type);
+                Debug.Assert(gcStaticsNode is GCStaticsNode);
+                return GCStaticsRegion.NewNode((GCStaticsNode)gcStaticsNode);
             });
 
             _threadStatics = new NodeCache<MetadataType, ThreadStaticsNode>((MetadataType type) =>
@@ -93,19 +136,29 @@ namespace ILCompiler.DependencyAnalysis
                 return new ThreadStaticsNode(type, this);
             });
 
-            _GCStaticEETypes = new NodeCache<bool[], GCStaticEETypeNode>((bool[] gcdesc) =>
+            _GCStaticEETypes = new NodeCache<GCPointerMap, GCStaticEETypeNode>((GCPointerMap gcMap) =>
             {
-                return new GCStaticEETypeNode(gcdesc, this);
-            }, new BoolArrayEqualityComparer());
+                return new GCStaticEETypeNode(Target, gcMap);
+            });
 
             _readOnlyDataBlobs = new NodeCache<Tuple<string, byte[], int>, BlobNode>((Tuple<string, byte[], int> key) =>
             {
-                return new BlobNode(key.Item1, "text", key.Item2, key.Item3);
-            });
+                return new BlobNode(key.Item1, ObjectNodeSection.ReadOnlyDataSection, key.Item2, key.Item3);
+            }, new BlobTupleEqualityComparer());
 
             _externSymbols = new NodeCache<string, ExternSymbolNode>((string name) =>
             {
                 return new ExternSymbolNode(name);
+            });
+
+            _pInvokeModuleFixups = new NodeCache<string, PInvokeModuleFixupNode>((string name) =>
+            {
+                return new PInvokeModuleFixupNode(name);
+            });
+
+            _pInvokeMethodFixups = new NodeCache<Tuple<string, string>, PInvokeMethodFixupNode>((Tuple<string, string> key) =>
+            {
+                return new PInvokeMethodFixupNode(key.Item1, key.Item2);
             });
 
             _internalSymbols = new NodeCache<Tuple<ObjectNode, int, string>, ObjectAndOffsetSymbolNode>(
@@ -114,17 +167,32 @@ namespace ILCompiler.DependencyAnalysis
                     return new ObjectAndOffsetSymbolNode(key.Item1, key.Item2, key.Item3);
                 });
 
-            _methodCode = new NodeCache<MethodDesc, ISymbolNode>((MethodDesc method) =>
+            _methodEntrypoints = new NodeCache<MethodDesc, IMethodNode>((MethodDesc method) =>
             {
-                if (_cppCodeGen)
-                   return new CppMethodCodeNode(method);
+                if (!_cppCodeGen)
+                {
+                    if (method.HasCustomAttribute("System.Runtime", "RuntimeImportAttribute"))
+                    {
+                        return new RuntimeImportMethodNode(method);
+                    }
+                }
+
+                if (_compilationModuleGroup.ContainsMethod(method))
+                {
+                    if (_cppCodeGen)
+                        return new CppMethodCodeNode(method);
+                    else
+                        return new MethodCodeNode(method);
+                }
                 else
-                    return new MethodCodeNode(method);
+                {
+                    return new ExternMethodSymbolNode(method);
+                }
             });
 
-            _jumpStubs = new NodeCache<ISymbolNode, JumpStubNode>((ISymbolNode node) =>
+            _unboxingStubs = new NodeCache<MethodDesc, IMethodNode>((MethodDesc method) =>
             {
-                return new JumpStubNode(node);
+                return new UnboxingStubNode(method);
             });
 
             _virtMethods = new NodeCache<MethodDesc, VirtualMethodUseNode>((MethodDesc method) =>
@@ -161,18 +229,52 @@ namespace ILCompiler.DependencyAnalysis
             {
                 return new InterfaceDispatchMapNode(type);
             });
+
+            _interfaceDispatchMapIndirectionNodes = new NodeCache<TypeDesc, EmbeddedObjectNode>((TypeDesc type) =>
+            {
+                var dispatchMap = InterfaceDispatchMap(type);
+                return DispatchMapTable.NewNodeWithSymbol(dispatchMap, (indirectionNode) =>
+                {
+                    dispatchMap.SetDispatchMapIndex(this, DispatchMapTable.IndexOfEmbeddedObject(indirectionNode));
+                });
+            });
+
+            _genericCompositions = new NodeCache<GenericCompositionDetails, GenericCompositionNode>((GenericCompositionDetails details) =>
+            {
+                return new GenericCompositionNode(details);
+            });
+
+            _eagerCctorIndirectionNodes = new NodeCache<MethodDesc, EmbeddedObjectNode>((MethodDesc method) =>
+            {
+                Debug.Assert(method.IsStaticConstructor);
+                Debug.Assert(TypeInitializationManager.HasEagerStaticConstructor((MetadataType)method.OwningType));
+                return EagerCctorTable.NewNode(MethodEntrypoint(method));
+            });
+            
+            _vTableNodes = new NodeCache<TypeDesc, VTableSliceNode>((TypeDesc type ) =>
+            {
+                if (CompilationModuleGroup.ShouldProduceFullType(type))
+                    return new EagerlyBuiltVTableSliceNode(type);
+                else
+                    return new LazilyBuiltVTableSliceNode(type);
+            });
+
+            _jumpThunks = new NodeCache<Tuple<ExternSymbolNode, ISymbolNode>, SingleArgumentJumpThunk>((Tuple<ExternSymbolNode, ISymbolNode> data) =>
+            {
+                return new SingleArgumentJumpThunk(data.Item1, data.Item2);
+            });
         }
 
-        private NodeCache<TypeDesc, EETypeNode> _typeSymbols;
+        private NodeCache<TypeDesc, IEETypeNode> _typeSymbols;
 
-        public ISymbolNode NecessaryTypeSymbol(TypeDesc type)
+        public IEETypeNode NecessaryTypeSymbol(TypeDesc type)
         {
             return _typeSymbols.GetOrAdd(type);
         }
 
-        private NodeCache<TypeDesc, EETypeNode> _constructedTypeSymbols;
+        private NodeCache<TypeDesc, IEETypeNode> _constructedTypeSymbols;
 
-        public ISymbolNode ConstructedTypeSymbol(TypeDesc type)
+        public IEETypeNode ConstructedTypeSymbol(TypeDesc type)
         {
             return _constructedTypeSymbols.GetOrAdd(type);
         }
@@ -181,26 +283,49 @@ namespace ILCompiler.DependencyAnalysis
 
         public ISymbolNode TypeNonGCStaticsSymbol(MetadataType type)
         {
-            return _nonGCStatics.GetOrAdd(type);
+            if (_compilationModuleGroup.ContainsType(type))
+            {
+                return _nonGCStatics.GetOrAdd(type);
+            }
+            else
+            {
+                return ExternSymbol("__NonGCStaticBase_" + NodeFactory.NameMangler.GetMangledTypeName(type));
+            }
         }
-
-        public ISymbolNode TypeCctorContextSymbol(MetadataType type)
-        {
-            return _nonGCStatics.GetOrAdd(type).ClassConstructorContext;
-        }
-
+        
         private NodeCache<MetadataType, GCStaticsNode> _GCStatics;
 
-        public GCStaticsNode TypeGCStaticsSymbol(MetadataType type)
+        public ISymbolNode TypeGCStaticsSymbol(MetadataType type)
         {
-            return _GCStatics.GetOrAdd(type);
+            if (_compilationModuleGroup.ContainsType(type))
+            {
+                return _GCStatics.GetOrAdd(type);
+            }
+            else
+            {
+                return ExternSymbol("__GCStaticBase_" + NodeFactory.NameMangler.GetMangledTypeName(type));
+            }
+        }
+
+        private NodeCache<MetadataType, EmbeddedObjectNode> _GCStaticIndirectionNodes;
+
+        public EmbeddedObjectNode GCStaticIndirection(MetadataType type)
+        {
+            return _GCStaticIndirectionNodes.GetOrAdd(type);
         }
 
         private NodeCache<MetadataType, ThreadStaticsNode> _threadStatics;
 
-        public ThreadStaticsNode TypeThreadStaticsSymbol(MetadataType type)
+        public ISymbolNode TypeThreadStaticsSymbol(MetadataType type)
         {
-            return _threadStatics.GetOrAdd(type);
+            if (_compilationModuleGroup.ContainsType(type))
+            {
+                return _threadStatics.GetOrAdd(type);
+            }
+            else
+            {
+                return ExternSymbol("__ThreadStaticBase_" + NodeFactory.NameMangler.GetMangledTypeName(type));
+            }
         }
 
         private NodeCache<MethodDesc, InterfaceDispatchCellNode> _interfaceDispatchCells;
@@ -210,41 +335,24 @@ namespace ILCompiler.DependencyAnalysis
             return _interfaceDispatchCells.GetOrAdd(method);
         }
 
-        private class BoolArrayEqualityComparer : IEqualityComparer<bool[]>
+        private class BlobTupleEqualityComparer : IEqualityComparer<Tuple<string, byte[], int>>
         {
-            bool IEqualityComparer<bool[]>.Equals(bool[] x, bool[] y)
+            bool IEqualityComparer<Tuple<string, byte[], int>>.Equals(Tuple<string, byte[], int> x, Tuple<string, byte[], int> y)
             {
-                if (x.Length != y.Length)
-                    return false;
-
-                for (int i = 0; i < x.Length; i++)
-                {
-                    if (x[i] != y[i])
-                        return false;
-                }
-
-                return true;
+                return x.Item1.Equals(y.Item1);
             }
 
-            int IEqualityComparer<bool[]>.GetHashCode(bool[] obj)
+            int IEqualityComparer<Tuple<string, byte[], int>>.GetHashCode(Tuple<string, byte[], int> obj)
             {
-                // TODO get better combining function for bools
-                int hash = 0x5d83481;
-                foreach (bool b in obj)
-                {
-                    int bAsInt = b ? 1 : 0;
-                    hash = (hash << 4) ^ hash ^ bAsInt;
-                }
-
-                return hash;
+                return obj.Item1.GetHashCode();
             }
         }
 
-        private NodeCache<bool[], GCStaticEETypeNode> _GCStaticEETypes;
+        private NodeCache<GCPointerMap, GCStaticEETypeNode> _GCStaticEETypes;
 
-        public ISymbolNode GCStaticEEType(bool[] gcdesc)
+        public ISymbolNode GCStaticEEType(GCPointerMap gcMap)
         {
-            return _GCStaticEETypes.GetOrAdd(gcdesc);
+            return _GCStaticEETypes.GetOrAdd(gcMap);
         }
 
         private NodeCache<Tuple<string, byte[], int>, BlobNode> _readOnlyDataBlobs;
@@ -268,11 +376,39 @@ namespace ILCompiler.DependencyAnalysis
             return _interfaceDispatchMaps.GetOrAdd(type);
         }
 
+        private NodeCache<TypeDesc, EmbeddedObjectNode> _interfaceDispatchMapIndirectionNodes;
+
+        public EmbeddedObjectNode InterfaceDispatchMapIndirection(TypeDesc type)
+        {
+            return _interfaceDispatchMapIndirectionNodes.GetOrAdd(type);
+        }
+
+        private NodeCache<GenericCompositionDetails, GenericCompositionNode> _genericCompositions;
+
+        internal ISymbolNode GenericComposition(GenericCompositionDetails details)
+        {
+            return _genericCompositions.GetOrAdd(details);
+        }
+
         private NodeCache<string, ExternSymbolNode> _externSymbols;
 
         public ISymbolNode ExternSymbol(string name)
         {
             return _externSymbols.GetOrAdd(name);
+        }
+
+        private NodeCache<string, PInvokeModuleFixupNode> _pInvokeModuleFixups;
+
+        public ISymbolNode PInvokeModuleFixup(string moduleName)
+        {
+            return _pInvokeModuleFixups.GetOrAdd(moduleName);
+        }
+
+        private NodeCache<Tuple<string, string>, PInvokeMethodFixupNode> _pInvokeMethodFixups;
+
+        public PInvokeMethodFixupNode PInvokeMethodFixup(string moduleName, string entryPointName)
+        {
+            return _pInvokeMethodFixups.GetOrAdd(new Tuple<string, string>(moduleName, entryPointName));
         }
 
         private NodeCache<Tuple<ObjectNode, int, string>, ObjectAndOffsetSymbolNode> _internalSymbols;
@@ -282,30 +418,40 @@ namespace ILCompiler.DependencyAnalysis
             return _internalSymbols.GetOrAdd(new Tuple<ObjectNode, int, string>(obj, offset, name));
         }
 
-        private NodeCache<MethodDesc, ISymbolNode> _methodCode;
-        private NodeCache<ISymbolNode, JumpStubNode> _jumpStubs;
+        private NodeCache<TypeDesc, VTableSliceNode> _vTableNodes;
 
-        public ISymbolNode MethodEntrypoint(MethodDesc method)
+        internal VTableSliceNode VTable(TypeDesc type)
         {
-            if (!_cppCodeGen)
+            return _vTableNodes.GetOrAdd(type);
+        }
+
+        private NodeCache<Tuple<ExternSymbolNode, ISymbolNode>, SingleArgumentJumpThunk> _jumpThunks;
+        
+        /// <summary>
+        /// Create a thunk that calls an externally defined (e.g., native) function, passing
+        /// a dependency node to the function it calls.
+        /// </summary>
+        internal SingleArgumentJumpThunk JumpThunk(ExternSymbolNode target, ISymbolNode argument)
+        {
+            return _jumpThunks.GetOrAdd(new Tuple<ExternSymbolNode, ISymbolNode>(target, argument));
+        }
+        
+        private NodeCache<MethodDesc, IMethodNode> _methodEntrypoints;
+        private NodeCache<MethodDesc, IMethodNode> _unboxingStubs;
+
+        public IMethodNode MethodEntrypoint(MethodDesc method, bool unboxingStub = false)
+        {
+            if (unboxingStub)
             {
-                var kind = method.DetectSpecialMethodKind();
-                if (kind == SpecialMethodKind.PInvoke)
-                {
-                    return _jumpStubs.GetOrAdd(ExternSymbol(method.GetPInvokeMethodMetadata().Name));
-                }
-                else if (kind == SpecialMethodKind.RuntimeImport)
-                {
-                    return ExternSymbol(((EcmaMethod)method).GetAttributeStringValue("System.Runtime", "RuntimeImportAttribute"));
-                }
+                return _unboxingStubs.GetOrAdd(method);
             }
 
-            return _methodCode.GetOrAdd(method);
+            return _methodEntrypoints.GetOrAdd(method);
         }
 
         private static readonly string[][] s_helperEntrypointNames = new string[][] {
-            new string[] { "System.Runtime.CompilerServices", "CctorHelper", "CheckStaticClassConstructionReturnGCStaticBase" },
-            new string[] { "System.Runtime.CompilerServices", "CctorHelper", "CheckStaticClassConstructionReturnNonGCStaticBase" }
+            new string[] { "System.Runtime.CompilerServices", "ClassConstructorRunner", "CheckStaticClassConstructionReturnGCStaticBase" },
+            new string[] { "System.Runtime.CompilerServices", "ClassConstructorRunner", "CheckStaticClassConstructionReturnNonGCStaticBase" }
         };
 
         private ISymbolNode[] _helperEntrypointSymbols;
@@ -332,6 +478,32 @@ namespace ILCompiler.DependencyAnalysis
             return symbol;
         }
 
+        private MetadataType _systemArrayOfTClass;
+        public MetadataType ArrayOfTClass
+        {
+            get
+            {
+                if (_systemArrayOfTClass == null)
+                {
+                    _systemArrayOfTClass = _context.SystemModule.GetKnownType("System", "Array`1");
+                }
+                return _systemArrayOfTClass;
+            }
+        }
+
+        private TypeDesc _systemArrayOfTEnumeratorType;
+        public TypeDesc ArrayOfTEnumeratorType
+        {
+            get
+            {
+                if (_systemArrayOfTEnumeratorType == null)
+                {
+                    _systemArrayOfTEnumeratorType = ArrayOfTClass.GetNestedType("ArrayEnumerator");
+                }
+                return _systemArrayOfTEnumeratorType;
+            }
+        }
+
         private TypeDesc _systemICastableType;
 
         public TypeDesc ICastableInterface
@@ -355,7 +527,7 @@ namespace ILCompiler.DependencyAnalysis
 
         private NodeCache<Tuple<ReadyToRunHelperId, Object>, ReadyToRunHelperNode> _readyToRunHelpers;
 
-        public ReadyToRunHelperNode ReadyToRunHelper(ReadyToRunHelperId id, Object target)
+        public ISymbolNode ReadyToRunHelper(ReadyToRunHelperId id, Object target)
         {
             return _readyToRunHelpers.GetOrAdd(new Tuple<ReadyToRunHelperId, object>(id, target));
         }
@@ -374,6 +546,13 @@ namespace ILCompiler.DependencyAnalysis
             return _stringIndirectionNodes.GetOrAdd(data);
         }
 
+        private NodeCache<MethodDesc, EmbeddedObjectNode> _eagerCctorIndirectionNodes;
+
+        public EmbeddedObjectNode EagerCctorIndirection(MethodDesc cctorMethod)
+        {
+            return _eagerCctorIndirectionNodes.GetOrAdd(cctorMethod);
+        }
+
         /// <summary>
         /// Returns alternative symbol name that object writer should produce for given symbols
         /// in addition to the regular one.
@@ -386,7 +565,7 @@ namespace ILCompiler.DependencyAnalysis
             return value;
         }
 
-        public ArrayOfEmbeddedDataNode GCStaticsRegion = new ArrayOfEmbeddedDataNode(
+        public ArrayOfEmbeddedPointersNode<GCStaticsNode> GCStaticsRegion = new ArrayOfEmbeddedPointersNode<GCStaticsNode>(
             NameMangler.CompilationUnitPrefix + "__GCStaticRegionStart", 
             NameMangler.CompilationUnitPrefix + "__GCStaticRegionEnd", 
             null);
@@ -399,20 +578,47 @@ namespace ILCompiler.DependencyAnalysis
             NameMangler.CompilationUnitPrefix + "__StringTableEnd", 
             null);
 
-        public InterfaceDispatchMapTableNode DispatchMapTable;
+        public ArrayOfEmbeddedPointersNode<IMethodNode> EagerCctorTable = new ArrayOfEmbeddedPointersNode<IMethodNode>(
+            NameMangler.CompilationUnitPrefix + "__EagerCctorStart",
+            NameMangler.CompilationUnitPrefix + "__EagerCctorEnd",
+            new EagerConstructorComparer());
 
-        public Dictionary<TypeDesc, List<MethodDesc>> VirtualSlots = new Dictionary<TypeDesc, List<MethodDesc>>();
+        public ArrayOfEmbeddedPointersNode<InterfaceDispatchMapNode> DispatchMapTable = new ArrayOfEmbeddedPointersNode<InterfaceDispatchMapNode>(
+            NameMangler.CompilationUnitPrefix + "__DispatchMapTableStart",
+            NameMangler.CompilationUnitPrefix + "__DispatchMapTableEnd",
+            null);
+
+        public ReadyToRunHeaderNode ReadyToRunHeader;
 
         public Dictionary<ISymbolNode, string> NodeAliases = new Dictionary<ISymbolNode, string>();
+
+        internal ModuleManagerIndirectionNode ModuleManagerIndirection = new ModuleManagerIndirectionNode();
 
         public static NameMangler NameMangler;
 
         public void AttachToDependencyGraph(DependencyAnalysisFramework.DependencyAnalyzerBase<NodeFactory> graph)
         {
+            ReadyToRunHeader = new ReadyToRunHeaderNode(Target);
+
+            graph.AddRoot(ReadyToRunHeader, "ReadyToRunHeader is always generated");
+            graph.AddRoot(new ModulesSectionNode(Target), "ModulesSection is always generated");
+
             graph.AddRoot(GCStaticsRegion, "GC StaticsRegion is always generated");
             graph.AddRoot(ThreadStaticsRegion, "ThreadStaticsRegion is always generated");
             graph.AddRoot(StringTable, "StringTable is always generated");
+            graph.AddRoot(EagerCctorTable, "EagerCctorTable is always generated");
+            graph.AddRoot(ModuleManagerIndirection, "ModuleManagerIndirection is always generated");
             graph.AddRoot(DispatchMapTable, "DispatchMapTable is always generated");
+
+            ReadyToRunHeader.Add(ReadyToRunSectionType.GCStaticRegion, GCStaticsRegion, GCStaticsRegion.StartSymbol, GCStaticsRegion.EndSymbol);
+            ReadyToRunHeader.Add(ReadyToRunSectionType.ThreadStaticRegion, ThreadStaticsRegion, ThreadStaticsRegion.StartSymbol, ThreadStaticsRegion.EndSymbol);
+            ReadyToRunHeader.Add(ReadyToRunSectionType.StringTable, StringTable, StringTable.StartSymbol, StringTable.EndSymbol);
+            ReadyToRunHeader.Add(ReadyToRunSectionType.EagerCctor, EagerCctorTable, EagerCctorTable.StartSymbol, EagerCctorTable.EndSymbol);
+            ReadyToRunHeader.Add(ReadyToRunSectionType.ModuleManagerIndirection, ModuleManagerIndirection, ModuleManagerIndirection);
+            ReadyToRunHeader.Add(ReadyToRunSectionType.InterfaceDispatchTable, DispatchMapTable, DispatchMapTable.StartSymbol);
+
+            MetadataManager.AddToReadyToRunHeader(ReadyToRunHeader);
+            MetadataManager.AttachToDependencyGraph(graph);
         }
     }
 

@@ -130,12 +130,12 @@ namespace System
 
         public static void FailFast(String message)
         {
-            FailFast(message, null, RhFailFastReason.Unknown, IntPtr.Zero);
+            FailFast(message, null, RhFailFastReason.Unknown, IntPtr.Zero, IntPtr.Zero);
         }
 
         public static unsafe void FailFast(string message, Exception exception)
         {
-            FailFast(message, exception, RhFailFastReason.Unknown, IntPtr.Zero);
+            FailFast(message, exception, RhFailFastReason.Unknown, IntPtr.Zero, IntPtr.Zero);
         }
 
         // Used to report exceptions that *logically* go unhandled in the Fx code.  For example, an
@@ -157,7 +157,7 @@ namespace System
         // needs to cause the process to exit. It is the classlib's opprotunity to customize the 
         // termination behavior in whatever way necessary.
         [RuntimeExport("FailFast")]
-        public static void RuntimeFailFast(RhFailFastReason reason, Exception exception, IntPtr pExContext)
+        public static void RuntimeFailFast(RhFailFastReason reason, Exception exception, IntPtr pExAddress, IntPtr pExContext)
         {
             // This method is called by the runtime's EH dispatch code and is not allowed to leak exceptions
             // back into the dispatcher.
@@ -176,6 +176,7 @@ namespace System
                                        exception != null ? " [exception object available]" : ""),
                          exception,
                          reason,
+                         pExAddress,
                          pExContext);
             }
             catch
@@ -185,7 +186,7 @@ namespace System
             }
         }
 
-        internal static void FailFast(string message, Exception exception, RhFailFastReason reason, IntPtr pExContext)
+        internal static void FailFast(string message, Exception exception, RhFailFastReason reason, IntPtr pExAddress, IntPtr pExContext)
         {
             // If this a recursive call to FailFast, avoid all unnecessary and complex actitivy the second time around to avoid the recursion 
             // that got us here the first time (Some judgement is required as to what activity is "unnecessary and complex".)
@@ -222,7 +223,7 @@ namespace System
                 errorCode = (uint)reason + 0x1000; // Add something to avoid common low level exit codes
             }
 
-            Interop.mincore.RaiseFailFastException(errorCode, pExContext);
+            Interop.mincore.RaiseFailFastException(errorCode, pExAddress, pExContext);
         }
 
         // This boolean is used to stop runaway FailFast recursions. Though this is technically a concurrently set field, it only gets set during 
@@ -350,7 +351,7 @@ namespace System
         /// provider" will be able to save the buffer's contents into triage dumps.
         /// 
         /// Thread safety information: The guarantee of this method is that the buffer it produces will have
-        /// complete and correct information for all live exceptions on the current thread (as long as the same excption object
+        /// complete and correct information for all live exceptions on the current thread (as long as the same exception object
         /// is not thrown simultaneously on multiple threads). It will do a best-effort attempt to serialize information about exceptions
         /// already recorded on other threads, but that data can be lost or corrupted. The restrictions are:
         /// 1. Only exceptions active or recorded on the current thread have their table data modified.
@@ -409,6 +410,15 @@ namespace System
             }
 
             int currentNestingLevel = curThreadExceptions.Length - 1;
+
+            // Make sure we serialize currentException
+            if (!exceptions.Contains(currentException))
+            {
+                // When this happens, currentException is probably passed to this function through System.Environment.FailFast(), we 
+                // would want to treat as if this exception is last thrown in the current thread.
+                exceptions.Insert(0, currentException);
+                currentNestingLevel++;
+            }
 
             // Populate exception data for all exceptions interesting to this thread.
             // Whether or not there was previously data for that object, it might have changed.

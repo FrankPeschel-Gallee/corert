@@ -204,12 +204,12 @@ namespace Internal.TypeSystem.Ecma
             {
                 TypeDesc baseType = this.BaseType;
 
-                if (_module.Context.IsWellKnownType(baseType, WellKnownType.ValueType))
+                if (baseType != null && baseType.IsWellKnownType(WellKnownType.ValueType))
                 {
                     flags |= TypeFlags.ValueType;
                 }
                 else
-                if (_module.Context.IsWellKnownType(baseType, WellKnownType.Enum))
+                if (baseType != null && baseType.IsWellKnownType(WellKnownType.Enum))
                 {
                     flags |= TypeFlags.Enum;
                 }
@@ -222,6 +222,20 @@ namespace Internal.TypeSystem.Ecma
                 }
 
                 // All other cases are handled during TypeSystemContext intitialization
+            }
+
+            if ((mask & TypeFlags.HasGenericVarianceComputed) != 0)
+            {
+                flags |= TypeFlags.HasGenericVarianceComputed;
+
+                foreach (GenericParameterDesc genericParam in Instantiation)
+                {
+                    if (genericParam.Variance != GenericVariance.None)
+                    {
+                        flags |= TypeFlags.HasGenericVariance;
+                        break;
+                    }
+                }
             }
 
             Debug.Assert((flags & mask) != 0);
@@ -320,7 +334,13 @@ namespace Internal.TypeSystem.Ecma
 
             if (decl != null)
             {
-                MethodDesc impl = VirtualFunctionResolution.FindVirtualFunctionTargetMethodOnObjectType(decl, this);
+                MethodDesc impl = this.FindVirtualFunctionTargetMethodOnObjectType(decl);
+                if (impl == null)
+                {
+                    // TODO: invalid input: the type doesn't derive from our System.Object
+                    throw new TypeLoadException(this.GetFullName());
+                }
+
                 if (impl.OwningType != objectType)
                 {
                     return impl;
@@ -403,13 +423,13 @@ namespace Internal.TypeSystem.Ecma
 
         public override bool HasCustomAttribute(string attributeNamespace, string attributeName)
         {
-            return MetadataReader.HasCustomAttribute(_typeDefinition.GetCustomAttributes(),
-                attributeNamespace, attributeName);
+            return !MetadataReader.GetCustomAttributeHandle(_typeDefinition.GetCustomAttributes(),
+                attributeNamespace, attributeName).IsNil;
         }
 
         public override string ToString()
         {
-            return "[" + _module.GetName().Name + "]" + this.GetFullName();
+            return "[" + _module.ToString() + "]" + this.GetFullName();
         }
 
         public override ClassLayoutMetadata GetClassLayout()
@@ -488,6 +508,14 @@ namespace Internal.TypeSystem.Ecma
             get
             {
                 return (_typeDefinition.Attributes & TypeAttributes.Sealed) != 0;
+            }
+        }
+
+        public override PInvokeStringFormat PInvokeStringFormat
+        {
+            get
+            {
+                return (PInvokeStringFormat)(_typeDefinition.Attributes & TypeAttributes.StringFormatMask);
             }
         }
     }

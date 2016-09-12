@@ -121,21 +121,6 @@ public:
     // todo: figure out the final error reporting strategy
     static bool InitializeSubsystems(GCType gcType);
 
-    // Allocate an object on the GC heap.
-    //  pThread         -  current Thread
-    //  cbSize          -  size in bytes of the final object
-    //  uFlags          -  GC type flags (see gc.h GC_ALLOC_*)
-    //  pEEType         -  type of the object
-    // Returns a pointer to the object allocated or NULL on failure.
-    static void* Alloc(Thread *pThread, UIntNative cbSize, UInt32 uFlags, EEType *pEEType);
-
-    // Allocate an object on the large GC heap. Used when you want to force an allocation on the large heap
-    // that wouldn't normally go there (e.g. objects containing double fields).
-    //  cbSize          -  size in bytes of the final object
-    //  uFlags          -  GC type flags (see gc.h GC_ALLOC_*)
-    // Returns a pointer to the object allocated or NULL on failure.
-    static void* AllocLarge(UIntNative cbSize, UInt32 uFlags);
-
     static void InitAllocContext(alloc_context * pAllocContext);
     static void ReleaseAllocContext(alloc_context * pAllocContext);
 
@@ -147,7 +132,7 @@ public:
 
     static void EnumGcRefs(ICodeManager * pCodeManager,
                            MethodInfo * pMethodInfo, 
-                           UInt32 codeOffset,
+                           PTR_VOID safePointAddress,
                            REGDISPLAY * pRegisterSet,
                            void * pfnEnumCallback,
                            void * pvCallbackData);
@@ -156,8 +141,6 @@ public:
                                                  PTR_RtuObjectRef pUpperBound,
                                                  void * pfnEnumCallback,
                                                  void * pvCallbackData);
-
-    static void GarbageCollect(UInt32 uGeneration, UInt32 uMode);
 
     static GcSegmentHandle RegisterFrozenSection(void * pSection, UInt32 SizeSection);
     static void UnregisterFrozenSection(GcSegmentHandle segment);
@@ -180,11 +163,6 @@ public:
     static bool IsScanInProgress();
     static GcScanObjectFunction GetCurrentScanCallbackFunction();
     static void* GetCurrentScanContext();
-
-    // If the class library has requested it, call this method on clean shutdown (i.e. return from Main) to
-    // perform a final pass of finalization where all finalizable objects are processed regardless of whether
-    // they are still rooted.
-    static void ShutdownFinalization();
 
     // Returns size GCDesc. Used by type cloning.
     static UInt32 GetGCDescSize(void * pType);

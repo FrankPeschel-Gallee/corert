@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 2.8.12)
 project(CoreRT)
 
+# Include cmake functions
+include(functions.cmake)
+
 set(CMAKE_MACOSX_RPATH ON)
 set(CMAKE_INSTALL_PREFIX $ENV{__CMakeBinDir})
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -79,10 +82,6 @@ if (CLR_CMAKE_PLATFORM_UNIX)
     add_definitions(-DPLATFORM_UNIX=1)
     add_definitions(-DPAL_STDCPP_COMPAT)
 
-    if(CLR_CMAKE_PLATFORM_LINUX)
-        add_definitions(-D__LINUX__=1)
-    endif()
-
     # All warnings that are not explicitly disabled are reported as errors
     add_compile_options(-Wall)
     add_compile_options(-Werror)
@@ -90,8 +89,11 @@ if (CLR_CMAKE_PLATFORM_UNIX)
     add_compile_options(-Wno-null-arithmetic)
     add_compile_options(-Wno-null-conversion)
 
-    # Allow 16 byte compare-exchange
-    add_compile_options(-mcx16)
+    if (CLR_CMAKE_PLATFORM_UNIX_TARGET_AMD64)
+        # Allow 16 byte compare-exchange
+        add_compile_options(-mcx16)
+        add_definitions(-DUNIX_AMD64_ABI)
+    endif()
 
     # Disable strict warning on unused functions.
     add_compile_options(-Wno-unused-function)
@@ -101,6 +103,17 @@ if (CLR_CMAKE_PLATFORM_UNIX)
 
     add_compile_options(-fPIC)
     add_compile_options(-fvisibility=hidden)
+
+    if(CLR_CMAKE_PLATFORM_DARWIN)
+        # We cannot enable "stack-protector-strong" on OS X due to a bug in clang compiler (current version 7.0.2)
+        add_compile_options(-fstack-protector)
+    else()
+        add_compile_options(-fstack-protector-strong)
+    endif(CLR_CMAKE_PLATFORM_DARWIN)
+
+    if(CLR_CMAKE_PLATFORM_LINUX)
+        set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -Wa,--noexecstack")  
+    endif(CLR_CMAKE_PLATFORM_LINUX)
 endif(CLR_CMAKE_PLATFORM_UNIX)
 
 if(CLR_CMAKE_PLATFORM_UNIX_TARGET_ARM)

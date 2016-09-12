@@ -43,11 +43,9 @@ namespace System.Threading
     {
         public static readonly int processorCount = Environment.ProcessorCount;
 
-        [SecurityCritical]
         private static ThreadPoolWorkQueue _workQueue;
         public static ThreadPoolWorkQueue workQueue
         {
-            [SecurityCritical]
             get
             {
                 return LazyInitializer.EnsureInitialized(ref _workQueue, () => new ThreadPoolWorkQueue());
@@ -78,7 +76,7 @@ namespace System.Threading
                 while (true)
                 {
                     T[] array = m_array;
-                    lock (m_lock)
+                    using (LockHolder.Hold(m_lock))
                     {
                         for (int i = 0; i < array.Length; i++)
                         {
@@ -107,7 +105,7 @@ namespace System.Threading
             internal void Remove(T e)
             {
                 T[] array = m_array;
-                lock (m_lock)
+                using (LockHolder.Hold(m_lock))
                 {
                     for (int i = 0; i < m_array.Length; i++)
                     {
@@ -533,9 +531,6 @@ namespace System.Threading
         // The head and tail of the queue.  We enqueue to the head, and dequeue from the tail.
         internal volatile QueueSegment queueHead;
         internal volatile QueueSegment queueTail;
-#if !FEATURE_CORECLR
-        //internal bool loggingEnabled;
-#endif
 
         internal static SparseArray<WorkStealingQueue> allThreadQueues = new SparseArray<WorkStealingQueue>(16); //TODO: base this on processor count, once the security restrictions are removed from Environment.ProcessorCount
 
@@ -544,12 +539,8 @@ namespace System.Threading
         public ThreadPoolWorkQueue()
         {
             queueTail = queueHead = new QueueSegment();
-#if !FEATURE_CORECLR
-            //loggingEnabled = System.Diagnostics.Tracing.FrameworkEventSource.Log.IsEnabled(System.Diagnostics.Tracing.EventLevel.Verbose, System.Diagnostics.Tracing.FrameworkEventSource.Keywords.ThreadPool);
-#endif
         }
 
-        [SecurityCritical]
         public ThreadPoolWorkQueueThreadLocals EnsureCurrentThreadHasQueue()
         {
             if (null == ThreadPoolWorkQueueThreadLocals.Current)
@@ -557,7 +548,6 @@ namespace System.Threading
             return ThreadPoolWorkQueueThreadLocals.Current;
         }
 
-        [SecurityCritical]
         internal void EnsureThreadRequested()
         {
             //
@@ -578,7 +568,6 @@ namespace System.Threading
             }
         }
 
-        [SecurityCritical]
         internal void MarkThreadRequestSatisfied()
         {
             //
@@ -599,17 +588,11 @@ namespace System.Threading
             }
         }
 
-        [SecurityCritical]
         public void Enqueue(IThreadPoolWorkItem callback, bool forceGlobal)
         {
             ThreadPoolWorkQueueThreadLocals tl = null;
             if (!forceGlobal)
                 tl = ThreadPoolWorkQueueThreadLocals.Current;
-
-#if !FEATURE_CORECLR
-            //if (loggingEnabled)
-            //    System.Diagnostics.Tracing.FrameworkEventSource.Log.ThreadPoolEnqueueWorkObject(callback);
-#endif
 
             if (null != tl)
             {
@@ -634,7 +617,6 @@ namespace System.Threading
             EnsureThreadRequested();
         }
 
-        [SecurityCritical]
         internal bool LocalFindAndPop(IThreadPoolWorkItem callback)
         {
             ThreadPoolWorkQueueThreadLocals tl = ThreadPoolWorkQueueThreadLocals.Current;
@@ -644,7 +626,6 @@ namespace System.Threading
             return tl.workStealingQueue.LocalFindAndPop(callback);
         }
 
-        [SecurityCritical]
         public void Dequeue(ThreadPoolWorkQueueThreadLocals tl, out IThreadPoolWorkItem callback, out bool missedSteal)
         {
             callback = null;
@@ -703,7 +684,6 @@ namespace System.Threading
         //requests in the current domain.
         const uint tpQuantum = 30U;
 
-        [SecurityCritical]
         static internal void Dispatch()
         {
             var workQueue = ThreadPoolGlobals.workQueue;
@@ -723,11 +703,6 @@ namespace System.Threading
             // record a thread request on our behalf.  So we don't need to worry about getting aborted right here.
             //
             workQueue.MarkThreadRequestSatisfied();
-
-#if !FEATURE_CORECLR
-            // Has the desire for logging changed since the last time we entered?
-            //workQueue.loggingEnabled = System.Diagnostics.Tracing.FrameworkEventSource.Log.IsEnabled(System.Diagnostics.Tracing.EventLevel.Verbose, System.Diagnostics.Tracing.FrameworkEventSource.Keywords.ThreadPool);
-#endif
 
             //
             // Assume that we're going to need another thread if this one returns to the VM.  We'll set this to 
@@ -786,11 +761,6 @@ namespace System.Threading
                     }
                     else
                     {
-#if !FEATURE_CORECLR
-                        //if (workQueue.loggingEnabled)
-                        //    System.Diagnostics.Tracing.FrameworkEventSource.Log.ThreadPoolDequeueWorkObject(workItem);
-#endif
-
                         //
                         // Execute the workitem outside of any finally blocks, so that it can be aborted if needed.
                         //
@@ -843,7 +813,6 @@ namespace System.Threading
             ThreadPoolWorkQueue.allThreadQueues.Add(workStealingQueue);
         }
 
-        [SecurityCritical]
         private void CleanUp()
         {
             if (null != workStealingQueue)
@@ -875,7 +844,6 @@ namespace System.Threading
             }
         }
 
-        [SecuritySafeCritical]
         ~ThreadPoolWorkQueueThreadLocals()
         {
             // Since the purpose of calling CleanUp is to transfer any pending workitems into the global
@@ -902,15 +870,11 @@ namespace System.Threading
     //
     internal interface IThreadPoolWorkItem
     {
-        [SecurityCritical]
         void ExecuteWorkItem();
     }
 
     internal sealed class QueueUserWorkItemCallback : IThreadPoolWorkItem
     {
-        [System.Security.SecuritySafeCritical]
-        static QueueUserWorkItemCallback() { }
-
         private WaitCallback callback;
         private ExecutionContext context;
         private Object state;
@@ -934,18 +898,13 @@ namespace System.Threading
         }
 #endif
 
-        //
-        // internal test hook - used by tests to exercise work-stealing, etc.
-        //
-        internal QueueUserWorkItemCallback(WaitCallback waitCallback, Object stateObj, bool captureContext)
+        internal QueueUserWorkItemCallback(WaitCallback waitCallback, Object stateObj, ExecutionContext ec)
         {
             callback = waitCallback;
             state = stateObj;
-            if (captureContext)
-                context = ExecutionContext.Capture();
+            context = ec;
         }
 
-        [SecurityCritical]
         void IThreadPoolWorkItem.ExecuteWorkItem()
         {
 #if DEBUG
@@ -965,10 +924,8 @@ namespace System.Threading
             }
         }
 
-        [System.Security.SecurityCritical]
         static internal ContextCallback ccb = new ContextCallback(WaitCallback_Context);
 
-        [System.Security.SecurityCritical]
         static private void WaitCallback_Context(Object state)
         {
             QueueUserWorkItemCallback obj = (QueueUserWorkItemCallback)state;
@@ -978,16 +935,76 @@ namespace System.Threading
         }
     }
 
+
+    internal sealed class QueueUserWorkItemCallbackDefaultContext : IThreadPoolWorkItem
+    {
+        private WaitCallback callback;
+        private Object state;
+
+#if DEBUG
+        volatile int executed;
+
+        ~QueueUserWorkItemCallbackDefaultContext()
+        {
+            Contract.Assert(
+                executed != 0 || Environment.HasShutdownStarted /*|| AppDomain.CurrentDomain.IsFinalizingForUnload()*/,
+                "A QueueUserWorkItemCallbackDefaultContext was never called!");
+        }
+
+        void MarkExecuted()
+        {
+            GC.SuppressFinalize(this);
+            Contract.Assert(
+                0 == Interlocked.Exchange(ref executed, 1),
+                "A QueueUserWorkItemCallbackDefaultContext was called twice!");
+        }
+#endif
+
+        internal QueueUserWorkItemCallbackDefaultContext(WaitCallback waitCallback, Object stateObj)
+        {
+            callback = waitCallback;
+            state = stateObj;
+        }
+
+        void IThreadPoolWorkItem.ExecuteWorkItem()
+        {
+#if DEBUG
+            MarkExecuted();
+#endif
+            try
+            {
+                ExecutionContext.Run(ExecutionContext.Default, ccb, this);
+            }
+            catch (Exception e)
+            {
+                RuntimeAugments.ReportUnhandledException(e);
+                throw; //unreachable
+            }
+        }
+
+        static internal ContextCallback ccb = new ContextCallback(WaitCallback_Context);
+
+        static private void WaitCallback_Context(Object state)
+        {
+            QueueUserWorkItemCallbackDefaultContext obj = (QueueUserWorkItemCallbackDefaultContext)state;
+            WaitCallback wc = obj.callback as WaitCallback;
+            Contract.Assert(null != wc);
+            wc(obj.state);
+        }
+    }
+
     internal static class ThreadPool
     {
-        [System.Security.SecuritySafeCritical]  // auto-generated
         public static void QueueUserWorkItem(
              WaitCallback callBack,     // NOTE: we do not expose options that allow the callback to be queued as an APC
              Object state
              )
         {
             Contract.Assert(callBack != null);
-            QueueUserWorkItemCallback tpcallBack = new QueueUserWorkItemCallback(callBack, state, captureContext: true);
+            ExecutionContext context = ExecutionContext.Capture();
+            IThreadPoolWorkItem tpcallBack = context == ExecutionContext.Default ?
+                    new QueueUserWorkItemCallbackDefaultContext(callBack, state) :
+                    (IThreadPoolWorkItem)new QueueUserWorkItemCallback(callBack, state, context);
             ThreadPoolGlobals.workQueue.Enqueue(tpcallBack, true);
         }
 
@@ -998,18 +1015,16 @@ namespace System.Threading
             QueueUserWorkItem(callBack, null);
         }
 
-        [System.Security.SecurityCritical]  // auto-generated_required
         public static void UnsafeQueueUserWorkItem(
              WaitCallback callBack,     // NOTE: we do not expose options that allow the callback to be queued as an APC
              Object state
              )
         {
             Contract.Assert(callBack != null);
-            QueueUserWorkItemCallback tpcallBack = new QueueUserWorkItemCallback(callBack, state, captureContext: false);
+            QueueUserWorkItemCallback tpcallBack = new QueueUserWorkItemCallback(callBack, state, null);
             ThreadPoolGlobals.workQueue.Enqueue(tpcallBack, true);
         }
 
-        [SecurityCritical]
         internal static void UnsafeQueueCustomWorkItem(IThreadPoolWorkItem workItem, bool forceGlobal)
         {
             Contract.Assert(null != workItem);
@@ -1021,14 +1036,12 @@ namespace System.Threading
         }
 
         // This method tries to take the target callback out of the current thread's queue.
-        [SecurityCritical]
         internal static bool TryPopCustomWorkItem(IThreadPoolWorkItem workItem)
         {
             return ThreadPoolGlobals.workQueue.LocalFindAndPop(workItem);
         }
 
         // Get all workitems.  Called by TaskScheduler in its debugger hooks.
-        [SecurityCritical]
         internal static IEnumerable<IThreadPoolWorkItem> GetQueuedWorkItems()
         {
             return EnumerateQueuedWorkItems(ThreadPoolWorkQueue.allThreadQueues.Current, ThreadPoolGlobals.workQueue.queueTail);
@@ -1072,13 +1085,11 @@ namespace System.Threading
             }
         }
 
-        [SecurityCritical]
         internal static IEnumerable<IThreadPoolWorkItem> GetLocallyQueuedWorkItems()
         {
             return EnumerateQueuedWorkItems(new ThreadPoolWorkQueue.WorkStealingQueue[] { ThreadPoolWorkQueueThreadLocals.Current.workStealingQueue }, null);
         }
 
-        [SecurityCritical]
         internal static IEnumerable<IThreadPoolWorkItem> GetGloballyQueuedWorkItems()
         {
             return EnumerateQueuedWorkItems(null, ThreadPoolGlobals.workQueue.queueTail);
@@ -1106,19 +1117,16 @@ namespace System.Threading
 
         // This is the method the debugger will actually call, if it ends up calling
         // into ThreadPool directly.  Tests can use this to simulate a debugger, as well.
-        [SecurityCritical]
         internal static object[] GetQueuedWorkItemsForDebugger()
         {
             return ToObjectArray(GetQueuedWorkItems());
         }
 
-        [SecurityCritical]
         internal static object[] GetGloballyQueuedWorkItemsForDebugger()
         {
             return ToObjectArray(GetGloballyQueuedWorkItems());
         }
 
-        [SecurityCritical]
         internal static object[] GetLocallyQueuedWorkItemsForDebugger()
         {
             return ToObjectArray(GetLocallyQueuedWorkItems());
@@ -1154,7 +1162,6 @@ namespace System.Threading
         }
     }
 
-    [SecurityCritical]
     internal static class NativeThreadPool
     {
         private static volatile bool s_dispatchCallbackSet;

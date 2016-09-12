@@ -4,11 +4,21 @@
 
 using System;
 
-internal class Program
+// Name of namespace matches the name of the assembly on purpose to
+// ensure that we can handle this (mostly an issue for C++ code generation).
+namespace Hello
 {
-    private static void Main(string[] args)
+    internal class Program
     {
-        Console.WriteLine("Hello world");
+        private static void Main(string[] args)
+        {
+            if (args.Length == 0)
+            {
+                Console.WriteLine("Usage: hello name");
+                return;
+            }
+
+            Console.WriteLine("Hello " + args[0]);
+        }
     }
 }
-

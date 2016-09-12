@@ -16,24 +16,39 @@ namespace Internal.TypeSystem
         private class FieldLayoutFlags
         {
             /// <summary>
-            /// True if ContainsPointers has been computed
+            /// True if ContainsGCPointers has been computed
             /// </summary>
-            public const int ComputedContainsPointers = 1;
+            public const int ComputedContainsGCPointers = 1;
 
             /// <summary>
             /// True if the type contains GC pointers
             /// </summary>
-            public const int ContainsPointers = 2;
+            public const int ContainsGCPointers = 2;
 
             /// <summary>
-            /// True if the instance field layout has been computed
+            /// True if the instance type only layout is computed
             /// </summary>
-            public const int ComputedInstanceFieldLayout = 4;
+            public const int ComputedInstanceTypeLayout = 4;
 
             /// <summary>
-            /// True if the static field layout has been computed
+            /// True if the static field layout for the static regions have been computed
             /// </summary>
-            public const int ComputedStaticFieldLayout = 8;
+            public const int ComputedStaticRegionLayout = 8;
+
+            /// <summary>
+            /// True if the instance type layout is complete including fields
+            /// </summary>
+            public const int ComputedInstanceTypeFieldsLayout = 0x10;
+
+            /// <summary>
+            /// True if the static field layout for the static fields have been computed
+            /// </summary>
+            public const int ComputedStaticFieldsLayout = 0x20;
+
+            /// <summary>
+            /// True if information about the shape of value type has been computed.
+            /// </summary>
+            public const int ComputedValueTypeShapeCharacteristics = 0x40;
         }
 
         private class StaticBlockInfo
@@ -53,18 +68,20 @@ namespace Internal.TypeSystem
         // Information about various static blocks is rare, so we keep it out of line.
         StaticBlockInfo _staticBlockInfo;
 
+        ValueTypeShapeCharacteristics _valueTypeShapeCharacteristics;
+
         /// <summary>
         /// Does a type transitively have any fields which are GC object pointers
         /// </summary>
-        public bool ContainsPointers
+        public bool ContainsGCPointers
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedContainsPointers))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedContainsGCPointers))
                 {
-                    ComputeTypeContainsPointers();
+                    ComputeTypeContainsGCPointers();
                 }
-                return _fieldLayoutFlags.HasFlags(FieldLayoutFlags.ContainsPointers);
+                return _fieldLayoutFlags.HasFlags(FieldLayoutFlags.ContainsGCPointers);
             }
         }
 
@@ -75,9 +92,9 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedInstanceFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedInstanceTypeLayout))
                 {
-                    ComputeInstanceFieldLayout();
+                    ComputeInstanceLayout(InstanceLayoutKind.TypeOnly);
                 }
                 return _instanceFieldSize;
             }
@@ -90,9 +107,9 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedInstanceFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedInstanceTypeLayout))
                 {
-                    ComputeInstanceFieldLayout();
+                    ComputeInstanceLayout(InstanceLayoutKind.TypeOnly);
                 }
                 return _instanceFieldAlignment;
             }
@@ -116,9 +133,9 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedInstanceFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedInstanceTypeLayout))
                 {
-                    ComputeInstanceFieldLayout();
+                    ComputeInstanceLayout(InstanceLayoutKind.TypeOnly);
                 }
                 return _instanceByteCountUnaligned;
             }
@@ -131,9 +148,9 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedInstanceFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedInstanceTypeLayout))
                 {
-                    ComputeInstanceFieldLayout();
+                    ComputeInstanceLayout(InstanceLayoutKind.TypeOnly);
                 }
                 return _instanceByteAlignment;
             }
@@ -146,9 +163,9 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticRegionLayout))
                 {
-                    ComputeStaticFieldLayout();
+                    ComputeStaticFieldLayout(StaticLayoutKind.StaticRegionSizes);
                 }
                 return _staticBlockInfo == null ? 0 : _staticBlockInfo.NonGcStatics.Size;
             }
@@ -161,9 +178,9 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticRegionLayout))
                 {
-                    ComputeStaticFieldLayout();
+                    ComputeStaticFieldLayout(StaticLayoutKind.StaticRegionSizes);
                 }
                 return _staticBlockInfo == null ? 0 : _staticBlockInfo.NonGcStatics.LargestAlignment;
             }
@@ -176,9 +193,9 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticRegionLayout))
                 {
-                    ComputeStaticFieldLayout();
+                    ComputeStaticFieldLayout(StaticLayoutKind.StaticRegionSizes);
                 }
                 return _staticBlockInfo == null ? 0 : _staticBlockInfo.GcStatics.Size;
             }
@@ -191,9 +208,9 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticRegionLayout))
                 {
-                    ComputeStaticFieldLayout();
+                    ComputeStaticFieldLayout(StaticLayoutKind.StaticRegionSizes);
                 }
                 return _staticBlockInfo == null ? 0 : _staticBlockInfo.GcStatics.LargestAlignment;
             }
@@ -207,9 +224,9 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticRegionLayout))
                 {
-                    ComputeStaticFieldLayout();
+                    ComputeStaticFieldLayout(StaticLayoutKind.StaticRegionSizes);
                 }
                 return _staticBlockInfo == null ? 0 : _staticBlockInfo.ThreadStatics.Size;
             }
@@ -223,25 +240,54 @@ namespace Internal.TypeSystem
         {
             get
             {
-                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticFieldLayout))
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticRegionLayout))
                 {
-                    ComputeStaticFieldLayout();
+                    ComputeStaticFieldLayout(StaticLayoutKind.StaticRegionSizes);
                 }
                 return _staticBlockInfo == null ? 0 : _staticBlockInfo.ThreadStatics.LargestAlignment;
             }
         }
 
         /// <summary>
-        /// Do the fields of the type satisfy the Homogeneous Float Aggregate classification on ARM architecture?
+        /// Gets a value indicating whether the fields of the type satisfy the Homogeneous Float Aggregate classification.
         /// </summary>
-        public virtual bool IsHFA()
+        public bool IsHfa
         {
-            return false;
+            get
+            {
+                if (!_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedValueTypeShapeCharacteristics))
+                {
+                    ComputeValueTypeShapeCharacteristics();
+                }
+                return (_valueTypeShapeCharacteristics & ValueTypeShapeCharacteristics.HomogenousFloatAggregate) != 0;
+            }
         }
-        
-        internal void ComputeInstanceFieldLayout()
+
+        /// <summary>
+        /// Get the Homogeneous Float Aggregate element type if this is a HFA type (<see cref="IsHfa"/> is true).
+        /// </summary>
+        public DefType HfaElementType
         {
-            var computedLayout = this.Context.GetLayoutAlgorithmForType(this).ComputeInstanceFieldLayout(this);
+            get
+            {
+                // We are not caching this because this is rare and not worth wasting space in DefType.
+                return this.Context.GetLayoutAlgorithmForType(this).ComputeHomogeneousFloatAggregateElementType(this);
+            }
+        }
+
+        private void ComputeValueTypeShapeCharacteristics()
+        {
+            _valueTypeShapeCharacteristics = this.Context.GetLayoutAlgorithmForType(this).ComputeValueTypeShapeCharacteristics(this);
+            _fieldLayoutFlags.AddFlags(FieldLayoutFlags.ComputedValueTypeShapeCharacteristics);
+        }
+
+
+        internal void ComputeInstanceLayout(InstanceLayoutKind layoutKind)
+        {
+            if (_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedInstanceTypeFieldsLayout | FieldLayoutFlags.ComputedInstanceTypeLayout))
+                return;
+
+            var computedLayout = this.Context.GetLayoutAlgorithmForType(this).ComputeInstanceLayout(this, layoutKind);
 
             _instanceFieldSize = computedLayout.FieldSize;
             _instanceFieldAlignment = computedLayout.FieldAlignment;
@@ -255,19 +301,23 @@ namespace Internal.TypeSystem
                     Debug.Assert(fieldAndOffset.Field.OwningType == this);
                     fieldAndOffset.Field.InitializeOffset(fieldAndOffset.Offset);
                 }
+                _fieldLayoutFlags.AddFlags(FieldLayoutFlags.ComputedInstanceTypeFieldsLayout);
             }
 
-            _fieldLayoutFlags.AddFlags(FieldLayoutFlags.ComputedInstanceFieldLayout);
+            _fieldLayoutFlags.AddFlags(FieldLayoutFlags.ComputedInstanceTypeLayout);
         }
 
-        internal void ComputeStaticFieldLayout()
+        internal void ComputeStaticFieldLayout(StaticLayoutKind layoutKind)
         {
-            var computedStaticLayout = this.Context.GetLayoutAlgorithmForType(this).ComputeStaticFieldLayout(this);
+            if (_fieldLayoutFlags.HasFlags(FieldLayoutFlags.ComputedStaticFieldsLayout | FieldLayoutFlags.ComputedStaticRegionLayout))
+                return;
 
-            if (computedStaticLayout.Offsets != null)
+            var computedStaticLayout = this.Context.GetLayoutAlgorithmForType(this).ComputeStaticFieldLayout(this, layoutKind);
+
+            if ((computedStaticLayout.NonGcStatics.Size != 0) ||
+                (computedStaticLayout.GcStatics.Size != 0) ||
+                (computedStaticLayout.ThreadStatics.Size != 0))
             {
-                Debug.Assert(computedStaticLayout.Offsets.Length > 0);
-
                 var staticBlockInfo = new StaticBlockInfo
                 {
                     NonGcStatics = computedStaticLayout.NonGcStatics,
@@ -275,30 +325,34 @@ namespace Internal.TypeSystem
                     ThreadStatics = computedStaticLayout.ThreadStatics
                 };
                 _staticBlockInfo = staticBlockInfo;
+            }
 
+            if (computedStaticLayout.Offsets != null)
+            {
                 foreach (var fieldAndOffset in computedStaticLayout.Offsets)
                 {
                     Debug.Assert(fieldAndOffset.Field.OwningType == this);
                     fieldAndOffset.Field.InitializeOffset(fieldAndOffset.Offset);
                 }
+                _fieldLayoutFlags.AddFlags(FieldLayoutFlags.ComputedStaticFieldsLayout);
             }
 
-            _fieldLayoutFlags.AddFlags(FieldLayoutFlags.ComputedStaticFieldLayout);
+            _fieldLayoutFlags.AddFlags(FieldLayoutFlags.ComputedStaticRegionLayout);
         }
 
-        private void ComputeTypeContainsPointers()
+        private void ComputeTypeContainsGCPointers()
         {
-            int flagsToAdd = FieldLayoutFlags.ComputedContainsPointers;
+            int flagsToAdd = FieldLayoutFlags.ComputedContainsGCPointers;
 
-            if (!IsValueType && HasBaseType && BaseType.ContainsPointers)
+            if (!IsValueType && HasBaseType && BaseType.ContainsGCPointers)
             {
-                _fieldLayoutFlags.AddFlags(flagsToAdd | FieldLayoutFlags.ContainsPointers);
+                _fieldLayoutFlags.AddFlags(flagsToAdd | FieldLayoutFlags.ContainsGCPointers);
                 return;
             }
 
-            if (this.Context.GetLayoutAlgorithmForType(this).ComputeContainsPointers(this))
+            if (this.Context.GetLayoutAlgorithmForType(this).ComputeContainsGCPointers(this))
             {
-                flagsToAdd |= FieldLayoutFlags.ContainsPointers;
+                flagsToAdd |= FieldLayoutFlags.ContainsGCPointers;
             }
 
             _fieldLayoutFlags.AddFlags(flagsToAdd);

@@ -31,7 +31,9 @@ namespace System
 
         internal protected object m_firstParameter;
         internal protected object m_helperObject;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA2111:PointersShouldNotBeVisible")]  
         internal protected IntPtr m_extraFunctionPointerOrData;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA2111:PointersShouldNotBeVisible")]  
         internal protected IntPtr m_functionPointer;
 
         [ThreadStatic]
@@ -57,7 +59,7 @@ namespace System
             // canonical delegates which use calling convention converter thunks to marshal arguments
             // for the delegate call. If we execute this version of GetThunk, we can at least assert
             // that the current delegate type is a generic type.
-            Debug.Assert(RuntimeImports.RhGetEETypeClassification(this.EETypePtr) == RuntimeImports.RhEETypeClassification.Generic);
+            Debug.Assert(this.EETypePtr.IsGeneric);
 #endif
             return TypeLoaderExports.GetDelegateThunk(this, whichThunk);
         }
@@ -673,6 +675,14 @@ namespace System
             }
         }
 
+        internal bool IsOpenStatic
+        {
+            get
+            {
+                return GetThunk(OpenStaticThunk) == m_functionPointer;
+            }
+        }
+
         internal static bool InternalEqualTypes(object a, object b)
         {
             return a.EETypePtr == b.EETypePtr;
@@ -688,8 +698,7 @@ namespace System
                 throw new InvalidOperationException();
             }
 
-            RuntimeImports.RhEETypeClassification delegateEETypeClassification = RuntimeImports.RhGetEETypeClassification(delegateEEType);
-            if (!(delegateEETypeClassification == RuntimeImports.RhEETypeClassification.Regular || delegateEETypeClassification == RuntimeImports.RhEETypeClassification.Generic))
+            if (!delegateEEType.IsDefType || delegateEEType.IsGenericTypeDefinition)
             {
                 throw new InvalidOperationException();
             }

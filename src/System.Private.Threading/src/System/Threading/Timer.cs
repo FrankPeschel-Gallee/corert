@@ -73,7 +73,6 @@ namespace System.Threading
         //
         private static int TickCount
         {
-            [SecuritySafeCritical]
             get
             {
                 ulong time100ns;
@@ -93,7 +92,6 @@ namespace System.Threading
         int m_currentNativeTimerStartTicks;
         uint m_currentNativeTimerDuration;
 
-        [SecuritySafeCritical]
         private void EnsureAppDomainTimerFiresBy(uint requestedDuration)
         {
             //
@@ -146,7 +144,6 @@ namespace System.Threading
         //
         // The VM calls this when the native timer fires.
         //
-        [SecuritySafeCritical]
         internal static void AppDomainTimerCallback()
         {
             try
@@ -173,10 +170,9 @@ namespace System.Threading
 
         volatile int m_pauseTicks = 0; // Time when Pause was called
 
-        [SecurityCritical]
         internal void Pause()
         {
-            lock (Lock)
+            using (LockHolder.Hold(Lock))
             {
                 // Delete the native timer so that no timers are fired in the Pause zone
                 if (m_appDomainTimer != null && !m_appDomainTimer.IsInvalid)
@@ -189,13 +185,12 @@ namespace System.Threading
             }
         }
 
-        [SecurityCritical]
         internal void Resume()
         {
             //
             // Update timers to adjust their due-time to accomodate Pause/Resume
             //
-            lock (Lock)
+            using (LockHolder.Hold(Lock))
             {
                 // prevent ThreadAbort while updating state
                 try { }
@@ -266,7 +261,7 @@ namespace System.Threading
             TimerQueueTimer timerToFireOnThisThread = null;
             Object previousTimer = null;
 
-            lock (Lock)
+            using (LockHolder.Hold(Lock))
             {
                 // prevent ThreadAbort while updating state
                 try { }
@@ -367,7 +362,6 @@ namespace System.Threading
                 timerToFireOnThisThread.Fire();
         }
 
-        [SecuritySafeCritical]
         private static void QueueTimerCompletion(TimerQueueTimer timer)
         {
             WaitCallback callback = s_fireQueuedTimerCompletion;
@@ -477,7 +471,6 @@ namespace System.Threading
         //volatile WaitHandle m_notifyWhenNoCallbacksRunning;
 
 
-        [SecurityCritical]
         internal TimerQueueTimer(TimerCallback timerCallback, object state, uint dueTime, uint period)
         {
             m_timerCallback = timerCallback;
@@ -500,7 +493,7 @@ namespace System.Threading
         {
             bool success;
 
-            lock (TimerQueue.Instance.Lock)
+            using (LockHolder.Hold(TimerQueue.Instance.Lock))
             {
                 if (m_canceled)
                     throw new ObjectDisposedException(null, SR.ObjectDisposed_Generic);
@@ -529,7 +522,7 @@ namespace System.Threading
 
         public void Close()
         {
-            lock (TimerQueue.Instance.Lock)
+            using (LockHolder.Hold(TimerQueue.Instance.Lock))
             {
                 // prevent ThreadAbort while updating state
                 try { }
@@ -550,7 +543,7 @@ namespace System.Threading
         //    bool success;
         //    bool shouldSignal = false;
 
-        //    lock (TimerQueue.Instance.Lock)
+        //    using (LockHolder.Hold(TimerQueue.Instance.Lock))
         //    {
         //        // prevent ThreadAbort while updating state
         //        try { }
@@ -585,7 +578,7 @@ namespace System.Threading
         {
             bool canceled = false;
 
-            //lock (TimerQueue.Instance.Lock)
+            //using (LockHolder.Hold(TimerQueue.Instance.Lock))
             //{
             //    // prevent ThreadAbort while updating state
             //    try { }
@@ -602,7 +595,7 @@ namespace System.Threading
 
             CallCallback();
             //bool shouldSignal = false;
-            //lock (TimerQueue.Instance.Lock)
+            //using (LockHolder.Hold(TimerQueue.Instance.Lock))
             //{
             //    // prevent ThreadAbort while updating state
             //    try { }
@@ -614,11 +607,10 @@ namespace System.Threading
             //    }
             //}
 
-            //if (shouldSignal)
-            //    SignalNoCallbacksRunning();
+                //if (shouldSignal)
+                //    SignalNoCallbacksRunning();
         }
 
-        //[SecuritySafeCritical]
         //internal void SignalNoCallbacksRunning()
         //{
         //    SafeHandle handle = m_notifyWhenNoCallbacksRunning.SafeWaitHandle;
@@ -627,7 +619,6 @@ namespace System.Threading
         //    handle.DangerousRelease();
         //}
 
-        [SecuritySafeCritical]
         internal void CallCallback()
         {
             ContextCallback callback = s_callCallbackInContext;
@@ -637,10 +628,8 @@ namespace System.Threading
             ExecutionContext.Run(m_executionContext, callback, this);
         }
 
-        [SecurityCritical]
         private static ContextCallback s_callCallbackInContext;
 
-        [SecurityCritical]
         private static void CallCallbackInContext(object state)
         {
             TimerQueueTimer t = (TimerQueueTimer)state;
@@ -707,7 +696,6 @@ namespace System.Threading
 
         private TimerHolder m_timer;
 
-        [SecuritySafeCritical]
         public Timer(TimerCallback callback,
                      Object state,
                      int dueTime,
@@ -722,7 +710,6 @@ namespace System.Threading
             TimerSetup(callback, state, (UInt32)dueTime, (UInt32)period);
         }
 
-        [SecuritySafeCritical]
         public Timer(TimerCallback callback,
                      Object state,
                      TimeSpan dueTime,
@@ -744,7 +731,6 @@ namespace System.Threading
         }
 
 
-        [SecurityCritical]
         private void TimerSetup(TimerCallback callback,
                                 Object state,
                                 UInt32 dueTime,
@@ -758,13 +744,11 @@ namespace System.Threading
         }
 
 #if FEATURE_LEGACYNETCFFAS
-        [SecurityCritical]
         internal static void Pause()
         {
             TimerQueue.Instance.Pause();
         }
 
-        [SecurityCritical]
         internal static void Resume()
         {
             TimerQueue.Instance.Resume();

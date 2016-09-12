@@ -107,6 +107,11 @@ namespace System.Globalization
         // All of the following will be created on demand.
         //
 
+        // WARNING: We allow diagnostic tools to directly inspect these three members (s_InvariantCultureInfo, s_DefaultThreadCurrentUICulture and s_DefaultThreadCurrentCulture)
+        // See https://github.com/dotnet/corert/blob/master/Documentation/design-docs/diagnostics/diagnostics-tools-contract.md for more details. 
+        // Please do not change the type, the name, or the semantic usage of this member without understanding the implication for tools. 
+        // Get in touch with the diagnostics team if you have questions.
+
         //The Invariant culture;
         private static volatile CultureInfo s_InvariantCultureInfo;
 
@@ -395,7 +400,6 @@ namespace System.Globalization
         public static CultureInfo DefaultThreadCurrentCulture
         {
             get { return s_DefaultThreadCurrentCulture; }
-            [System.Security.SecuritySafeCritical]  // auto-generated
             set
             {
                 // If you add pre-conditions to this method, check to see if you also need to
@@ -408,7 +412,6 @@ namespace System.Globalization
         public static CultureInfo DefaultThreadCurrentUICulture
         {
             get { return s_DefaultThreadCurrentUICulture; }
-            [System.Security.SecuritySafeCritical]  // auto-generated
             set
             {
                 //If they're trying to use a Culture with a name that we can't use in resource lookup,
@@ -539,7 +542,6 @@ namespace System.Globalization
         ////////////////////////////////////////////////////////////////////////
         public virtual String DisplayName
         {
-            [System.Security.SecuritySafeCritical]  // auto-generated
             get
             {
                 Contract.Ensures(Contract.Result<String>() != null);
@@ -560,7 +562,6 @@ namespace System.Globalization
         ////////////////////////////////////////////////////////////////////////
         public virtual String NativeName
         {
-            [System.Security.SecuritySafeCritical]  // auto-generated
             get
             {
                 Contract.Ensures(Contract.Result<String>() != null);
@@ -579,7 +580,6 @@ namespace System.Globalization
         ////////////////////////////////////////////////////////////////////////
         public virtual String EnglishName
         {
-            [System.Security.SecuritySafeCritical]  // auto-generated
             get
             {
                 Contract.Ensures(Contract.Result<String>() != null);
@@ -590,7 +590,6 @@ namespace System.Globalization
         // ie: en
         public virtual String TwoLetterISOLanguageName
         {
-            [System.Security.SecuritySafeCritical]  // auto-generated
             get
             {
                 Contract.Ensures(Contract.Result<String>() != null);
@@ -1054,7 +1053,7 @@ namespace System.Globalization
             else
             {
                 bool ret;
-                lock (s_lock)
+                using (LockHolder.Hold(s_lock))
                 {
                     ret = tempNameHT.TryGetValue(name, out retval);
                 }
@@ -1081,7 +1080,7 @@ namespace System.Globalization
             string newName = CultureData.AnsiToLower(retval.m_name);
 
             // We add this new culture info object to both tables.
-            lock (s_lock)
+            using (LockHolder.Hold(s_lock))
             {
                 tempNameHT[newName] = retval;
             }

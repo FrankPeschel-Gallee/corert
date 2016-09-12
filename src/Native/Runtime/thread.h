@@ -71,7 +71,7 @@ struct ThreadBuffer
 #else
     PTR_VOID volatile       m_pTransitionFrame;
 #endif
-    PTR_VOID                m_pHackPInvokeTunnel;                   // see Thread::HackEnablePreemptiveMode
+    PTR_VOID                m_pHackPInvokeTunnel;                   // see Thread::EnablePreemptiveMode
     PTR_VOID                m_pCachedTransitionFrame;
     PTR_Thread              m_pNext;                                // used by ThreadStore's SList<Thread>
     HANDLE                  m_hPalThread;                           // WARNING: this may legitimately be INVALID_HANDLE_VALUE
@@ -81,7 +81,8 @@ struct ThreadBuffer
     PTR_VOID                m_pStackLow;
     PTR_VOID                m_pStackHigh;
     PTR_UInt8               m_pTEB;                                 // Pointer to OS TEB structure for this thread
-    UInt32                  m_uPalThreadId;                         // @TODO: likely debug-only 
+    UInt64                  m_uPalThreadIdForLogging;               // @TODO: likely debug-only 
+    EEThreadId              m_threadId;               
     PTR_VOID                m_pThreadStressLog;                     // pointer to head of thread's StressLogChunks
 #ifdef FEATURE_GC_STRESS
     UInt32                  m_uRand;                                // current per-thread random number
@@ -143,17 +144,6 @@ private:
     // SyncState members
     //
     PTR_VOID    GetTransitionFrame();
-    // ---------------------------------------------------------------------------------------------------
-    // Synchronous state transitions -- these must occur on the thread whose state is changing
-    //
-    void        LeaveRendezVous(void * pTransitionFrame);
-    bool        TryReturnRendezVous(void * pTransitionFrame);
-
-    // begin { // the set of operations used to support unmanaged code running in cooperative mode
-    void        HackEnablePreemptiveMode();
-    void        HackDisablePreemptiveMode();
-    // } end 
-    // -------------------------------------------------------------------------------------------------------
 
     void GcScanRootsWorker(void * pfnEnumCallback, void * pvCallbackData, StackFrameIterator & sfIter);
 
@@ -165,9 +155,11 @@ public:
     bool                IsInitialized();
 
     alloc_context *     GetAllocContext();  // @TODO: I would prefer to not expose this in this way
-    UInt32              GetPalThreadId();
 
 #ifndef DACCESS_COMPILE
+    UInt64              GetPalThreadIdForLogging();
+    bool                IsCurrentThread();
+
     void                GcScanRoots(void * pfnEnumCallback, void * pvCallbackData);
 #else
     typedef void GcScanRootsCallbackFunc(PTR_RtuObjectRef ppObject, void* token, UInt32 flags);
@@ -222,32 +214,37 @@ public:
 
     static bool         IsHijackTarget(void * address);
 
-    // -------------------------------------------------------------------------------------------------------
-    // LEGACY APIs: do not use except from GC itself
     //
-    bool PreemptiveGCDisabled();
-    void EnablePreemptiveGC();
-    void DisablePreemptiveGC();
-    void PulseGCMode();
+    // The set of operations used to support unmanaged code running in cooperative mode
+    //
+    void                EnablePreemptiveMode();
+    void                DisablePreemptiveMode();
+
+    // Set the m_pHackPInvokeTunnel field for GC allocation helpers that setup transition frame 
+    // in assembly code. Do not use anywhere else.
+    void                SetCurrentThreadPInvokeTunnelForGcAlloc(void * pTransitionFrame);
+
+    // Setup the m_pHackPInvokeTunnel field for GC helpers entered via regular PInvoke.
+    // Do not use anywhere else.
+    void                SetupHackPInvokeTunnel();
+
+    //
+    // GC support APIs - do not use except from GC itself
+    //
     void SetGCSpecial(bool isGCSpecial);
     bool IsGCSpecial();
     bool CatchAtSafePoint();
-    // END LEGACY APIs
-    // -------------------------------------------------------------------------------------------------------
 
-    // Nothing to do.
-    bool HaveExtraWorkForFinalizer() { return false; }
+    //
+    // Managed/unmanaged interop transitions support APIs
+    //
+    void WaitForSuspend();
+    void WaitForGC(void * pTransitionFrame);
 
-    // We have chosen not to eagerly commit thread stacks.
-    static bool CommitThreadStack(Thread* pThreadOptional) 
-    { 
-        UNREFERENCED_PARAMETER(pThreadOptional);
-        return true; 
-    }
+    void ReversePInvokeAttachOrTrapThread(ReversePInvokeFrame * pFrame);
 
-    bool TryFastReversePInvoke(ReversePInvokeFrame * pFrame);
-    void ReversePInvoke(ReversePInvokeFrame * pFrame);
-    void ReversePInvokeReturn(ReversePInvokeFrame * pFrame);
+    bool InlineTryFastReversePInvoke(ReversePInvokeFrame * pFrame);
+    void InlineReversePInvokeReturn(ReversePInvokeFrame * pFrame);
 };
 
 #ifndef GCENV_INCLUDED

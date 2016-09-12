@@ -61,7 +61,6 @@ namespace System
     ===========================================================*/
 
 
-
     // CONTRACT with Runtime
     // The Char type is one of the primitives understood by the compilers and runtime
     // Data Contract: Single field of type char
@@ -295,7 +294,6 @@ namespace System
     }
 
 
-
     /*============================================================
     **
     ** Class:  IntPtr
@@ -319,10 +317,48 @@ namespace System
         [Intrinsic]
         public static readonly IntPtr Zero;
 
+        public unsafe static int Size
+        {
+            [Intrinsic]
+            get
+            {
+#if BIT64
+                return 8;
+#else
+                return 4;
+#endif
+            }
+        }
+
         [Intrinsic]
         public unsafe IntPtr(void* value)
         {
             _value = value;
+        }
+
+        [Intrinsic]
+        public unsafe IntPtr(int value)
+        {
+            _value = (void*)value;
+        }
+
+        [Intrinsic]
+        public unsafe IntPtr(long value)
+        {
+            _value = (void*)value;
+        }
+
+
+        [Intrinsic]
+        public static unsafe explicit operator IntPtr(int value)
+        {
+            return new IntPtr(value);
+        }
+
+        [Intrinsic]
+        public static unsafe explicit operator IntPtr(long value)
+        {
+            return new IntPtr(value);
         }
 
         [Intrinsic]
@@ -338,9 +374,21 @@ namespace System
         }
 
         [Intrinsic]
+        public static unsafe explicit operator int(IntPtr value)
+        {
+            return unchecked((int)value._value);
+        }
+
+        [Intrinsic]
+        public static unsafe explicit operator long(IntPtr value)
+        {
+            return unchecked((long)value._value);
+        }
+
+        [Intrinsic]
         public unsafe static bool operator ==(IntPtr value1, IntPtr value2)
         {
-            return value1._value != value2._value;
+            return value1._value == value2._value;
         }
 
         [Intrinsic]
@@ -350,7 +398,6 @@ namespace System
         }
     }
 #pragma warning restore 0660, 0661
-#pragma warning restore 0661
 
 
     /*============================================================
@@ -440,4 +487,3 @@ namespace System
     }
 #pragma warning restore 0660, 0661
 }
-

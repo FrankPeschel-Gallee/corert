@@ -9,6 +9,8 @@
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 
+using Internal.Runtime;
+
 namespace System.Runtime
 {
     internal static class InternalCalls
@@ -18,10 +20,23 @@ namespace System.Runtime
         //
 
         // Force a garbage collection.
-        [RuntimeImport(Redhawk.BaseName, "RhCollect")]
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        [ManuallyManaged(GcPollPolicy.Always)]
-        internal static extern void RhCollect(int generation, InternalGCCollectionMode mode);
+        [RuntimeExport("RhCollect")]
+        internal static void RhCollect(int generation, InternalGCCollectionMode mode)
+        {
+            RhpCollect(generation, mode);
+        }
+
+        [DllImport(Redhawk.BaseName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RhpCollect(int generation, InternalGCCollectionMode mode);
+
+        [RuntimeExport("RhGetGcTotalMemory")]
+        internal static long RhGetGcTotalMemory()
+        {
+            return RhpGetGcTotalMemory();
+        }
+
+        [DllImport(Redhawk.BaseName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern long RhpGetGcTotalMemory();
 
         //
         // internalcalls for System.Runtime.__Finalizer.
@@ -54,6 +69,16 @@ namespace System.Runtime
         [MethodImpl(MethodImplOptions.InternalCall)]
         [ManuallyManaged(GcPollPolicy.Never)]
         internal static extern IntPtr RhpHandleAllocVariable(Object value, uint type);
+
+        [RuntimeImport(Redhawk.BaseName, "RhHandleGet")]
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        [ManuallyManaged(GcPollPolicy.Never)]
+        internal static extern Object RhHandleGet(IntPtr handle);
+
+        [RuntimeImport(Redhawk.BaseName, "RhHandleSet")]
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        [ManuallyManaged(GcPollPolicy.Never)]
+        internal static extern IntPtr RhHandleSet(IntPtr handle, Object value);
 
         //
         // internal calls for allocation
@@ -301,14 +326,14 @@ namespace System.Runtime
         // Indicate that the current round of finalizations is complete.
         [DllImport(Redhawk.BaseName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void RhpSignalFinalizationComplete();
-    }
 
-    // Keep this synchronized with GenericVarianceType in rhbinder.h.
-    public enum GenericVariance : byte
-    {
-        NonVariant = 0,
-        Covariant = 1,
-        Contravariant = 2,
-        ArrayCovariant = 0x20,
+        [DllImport(Redhawk.BaseName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void RhpAcquireCastCacheLock();
+
+        [DllImport(Redhawk.BaseName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void RhpReleaseCastCacheLock();
+
+        [DllImport(Redhawk.BaseName, CallingConvention = CallingConvention.Cdecl)]
+        internal extern static long PalGetTickCount64();
     }
 }

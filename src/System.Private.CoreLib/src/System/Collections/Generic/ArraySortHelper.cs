@@ -309,6 +309,10 @@ namespace System.Collections.Generic
 
     internal class ArraySortHelper<TKey, TValue>
     {
+        // WARNING: We allow diagnostic tools to directly inspect this member (s_defaultArraySortHelper). 
+        // See https://github.com/dotnet/corert/blob/master/Documentation/design-docs/diagnostics/diagnostics-tools-contract.md for more details. 
+        // Please do not change the type, the name, or the semantic usage of this member without understanding the implication for tools. 
+        // Get in touch with the diagnostics team if you have questions.
         private static volatile ArraySortHelper<TKey, TValue> s_defaultArraySortHelper;
 
         public static ArraySortHelper<TKey, TValue> Default
@@ -323,7 +327,6 @@ namespace System.Collections.Generic
             }
         }
 
-        [System.Security.SecuritySafeCritical]  // auto-generated
         private static ArraySortHelper<TKey, TValue> CreateArraySortHelper()
         {
             s_defaultArraySortHelper = new ArraySortHelper<TKey, TValue>();

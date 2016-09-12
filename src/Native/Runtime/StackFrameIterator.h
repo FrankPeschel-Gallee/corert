@@ -39,7 +39,7 @@ public:
     bool            IsValid();
     void            CalculateCurrentMethodState();
     void            Next();
-    UInt32          GetCodeOffset();
+    PTR_VOID        GetEffectiveSafePointAddress();
     REGDISPLAY *    GetRegisterSet();
     ICodeManager *  GetCodeManager();
     MethodInfo *    GetMethodInfo();
@@ -92,9 +92,6 @@ private:
     // than the SP reference value passed in.  This is useful when 'restarting' the stackwalk from a 
     // particular PInvokeTransitionFrame or after we have a 'collided unwind' that may skip over ExInfos. 
     void ResetNextExInfoForSP(UIntNative SP);
-
-    void UpdateStateForRemappedGCSafePoint(UInt32 funcletStartOffset);
-    void RemapHardwareFaultToGCSafePoint();
 
     void UpdateFromExceptionDispatch(PTR_StackFrameIterator pSourceIterator);
 
@@ -157,7 +154,14 @@ private:
         PTR_UIntNative pR9;
         PTR_UIntNative pR10;
         PTR_UIntNative pR11;
-#else
+#elif defined(UNIX_AMD64_ABI)
+        PTR_UIntNative pRbp;
+        PTR_UIntNative pRbx;
+        PTR_UIntNative pR12;
+        PTR_UIntNative pR13;
+        PTR_UIntNative pR14;
+        PTR_UIntNative pR15;
+#else // _TARGET_ARM_
         PTR_UIntNative pRbp;
         PTR_UIntNative pRdi;
         PTR_UIntNative pRsi;
@@ -167,8 +171,8 @@ private:
         PTR_UIntNative pR13;
         PTR_UIntNative pR14;
         PTR_UIntNative pR15;
-#endif // _AMD64_
-#endif // _ARM_
+#endif // _TARGET_AMD64_
+#endif // _TARGET_ARM_
     };
 
 protected:
@@ -179,7 +183,7 @@ protected:
     REGDISPLAY          m_RegDisplay;
     ICodeManager *      m_pCodeManager;
     MethodInfo          m_methodInfo;
-    UInt32              m_codeOffset;
+    PTR_VOID            m_effectiveSafePointAddress;
     PTR_RtuObjectRef    m_pHijackedReturnValue;
     GCRefKind           m_HijackedReturnValueKind;
     PTR_UIntNative      m_pConservativeStackRangeLowerBound;

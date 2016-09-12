@@ -5,9 +5,10 @@
 #define FASTLOOP
 
 using System;
-using System.Diagnostics.Contracts;
 using System.Globalization;
 using System.Text;
+
+using Debug = Internal.Runtime.CompilerHelpers.StartupDebug;
 
 namespace Internal.Runtime.CompilerHelpers
 {
@@ -49,11 +50,10 @@ namespace Internal.Runtime.CompilerHelpers
         //
         // To simplify maintenance, the structure of GetCharCount and GetChars should be
         // kept the same as much as possible
-        [System.Security.SecurityCritical]  // auto-generated
         internal unsafe static int GetCharCount(byte* bytes, int count)
         {
-            Contract.Assert(count >= 0);
-            Contract.Assert(bytes != null);
+            Debug.Assert(count >= 0);
+            Debug.Assert(bytes != null);
 
             // Initialize stuff
             byte* pSrc = bytes;
@@ -100,7 +100,7 @@ namespace Internal.Runtime.CompilerHelpers
 
                 if ((ch & FinalByte) == 0)
                 {
-                    Contract.Assert((ch & (SupplimentarySeq | ThreeByteSeq)) != 0);
+                    Debug.Assert((ch & (SupplimentarySeq | ThreeByteSeq)) != 0);
 
                     if ((ch & SupplimentarySeq) != 0)
                     {
@@ -433,7 +433,7 @@ namespace Internal.Runtime.CompilerHelpers
 
             // Shouldn't have anything in fallback buffer for GetCharCount
             // (don't have to check m_throwOnOverflow for count)
-            Contract.Assert(fallback == null);
+            Debug.Assert(fallback == null);
 
             return charCount;
         }
@@ -448,14 +448,13 @@ namespace Internal.Runtime.CompilerHelpers
         //
         // To simplify maintenance, the structure of GetCharCount and GetChars should be
         // kept the same as much as possible
-        [System.Security.SecurityCritical]  // auto-generated
         internal unsafe static int GetChars(byte* bytes, int byteCount,
                                         char* chars, int charCount)
         {
-            Contract.Assert(chars != null);
-            Contract.Assert(byteCount >= 0);
-            Contract.Assert(charCount >= 0);
-            Contract.Assert(bytes != null);
+            Debug.Assert(chars != null);
+            Debug.Assert(byteCount >= 0);
+            Debug.Assert(charCount >= 0);
+            Debug.Assert(bytes != null);
 
             byte* pSrc = bytes;
             char* pTarget = chars;
@@ -502,7 +501,7 @@ namespace Internal.Runtime.CompilerHelpers
                 if ((ch & FinalByte) == 0)
                 {
                     // Not at last byte yet
-                    Contract.Assert((ch & (SupplimentarySeq | ThreeByteSeq)) != 0);
+                    Debug.Assert((ch & (SupplimentarySeq | ThreeByteSeq)) != 0);
 
                     if ((ch & SupplimentarySeq) != 0)
                     {
@@ -651,7 +650,7 @@ namespace Internal.Runtime.CompilerHelpers
 
                     // Throw that we don't have enough room (pSrc could be < chars if we had started to process
                     // a 4 byte sequence alredy)
-                    Contract.Assert(pSrc >= bytes || pTarget == chars);
+                    Debug.Assert(pSrc >= bytes || pTarget == chars);
                     if (pTarget == chars)
                     {
                         // Overflow, buffer too short.
@@ -926,7 +925,7 @@ namespace Internal.Runtime.CompilerHelpers
                 }
 #endif // FASTLOOP
 
-                Contract.Assert(pTarget <= pAllocatedBufferEnd);
+                Debug.Assert(pTarget <= pAllocatedBufferEnd);
 
                 // no pending bits at this point
                 ch = 0;
@@ -947,7 +946,7 @@ namespace Internal.Runtime.CompilerHelpers
 
             // Shouldn't have anything in fallback buffer for GetChars
             // (don't have to check m_throwOnOverflow for chars)
-            Contract.Assert(fallback == null);
+            Debug.Assert(fallback == null);
 
             return PtrDiff(pTarget, chars);
         }

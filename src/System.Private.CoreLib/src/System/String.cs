@@ -101,6 +101,10 @@ namespace System
 #if !CORERT
         [Bound]
 #endif
+        // WARNING: We allow diagnostic tools to directly inspect these two members (_stringLength, _firstChar)
+        // See https://github.com/dotnet/corert/blob/master/Documentation/design-docs/diagnostics/diagnostics-tools-contract.md for more details. 
+        // Please do not change the type, the name, or the semantic usage of this member without understanding the implication for tools. 
+        // Get in touch with the diagnostics team if you have questions.
         private int _stringLength;
         private char _firstChar;
 
@@ -186,7 +190,6 @@ namespace System
 
         [CLSCompliant(false)]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [SecurityCritical] // required to match contract
 #if CORERT
         unsafe public extern String(char* value);   // CtorCharPtr
 
@@ -226,7 +229,6 @@ namespace System
 
         [CLSCompliant(false)]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [SecurityCritical] // required to match contract
 #if CORERT
         unsafe public extern String(char* value, int startIndex, int length);   // CtorCharPtrStartLength
 
@@ -355,24 +357,16 @@ namespace System
             if (values.Length == 0 || values[0] == null)
                 return String.Empty;
 
-            if (separator == null)
-                separator = String.Empty;
-
             StringBuilder result = StringBuilderCache.Acquire();
 
-            String value = values[0].ToString();
-            if (value != null)
-                result.Append(value);
+            result.Append(values[0].ToString());
 
             for (int i = 1; i < values.Length; i++)
             {
                 result.Append(separator);
                 if (values[i] != null)
                 {
-                    // handle the case where their ToString() override is broken
-                    value = values[i].ToString();
-                    if (value != null)
-                        result.Append(value);
+                    result.Append(values[i].ToString());
                 }
             }
             return StringBuilderCache.GetStringAndRelease(result);
@@ -383,34 +377,27 @@ namespace System
             if (values == null)
                 throw new ArgumentNullException("values");
 
-            if (separator == null)
-                separator = String.Empty;
-
             using (IEnumerator<T> en = values.GetEnumerator())
             {
                 if (!en.MoveNext())
                     return String.Empty;
 
                 StringBuilder result = StringBuilderCache.Acquire();
-                if (en.Current != null)
+                T currentValue = en.Current;
+
+                if (currentValue != null)
                 {
-                    // handle the case that the enumeration has null entries
-                    // and the case where their ToString() override is broken
-                    string value = en.Current.ToString();
-                    if (value != null)
-                        result.Append(value);
+                    result.Append(currentValue.ToString());
                 }
 
                 while (en.MoveNext())
                 {
+                    currentValue = en.Current;
+
                     result.Append(separator);
-                    if (en.Current != null)
+                    if (currentValue != null)
                     {
-                        // handle the case that the enumeration has null entries
-                        // and the case where their ToString() override is broken
-                        string value = en.Current.ToString();
-                        if (value != null)
-                            result.Append(value);
+                        result.Append(currentValue.ToString());
                     }
                 }
                 return StringBuilderCache.GetStringAndRelease(result);
@@ -701,19 +688,19 @@ namespace System
 
                 while (length >= 12)
                 {
-                    if (*(long*)a != *(long*)b) return false;
-                    if (*(long*)(a + 4) != *(long*)(b + 4)) return false;
-                    if (*(long*)(a + 8) != *(long*)(b + 8)) return false;
+                    if (*(long*)a != *(long*)b) goto ReturnFalse;
+                    if (*(long*)(a + 4) != *(long*)(b + 4)) goto ReturnFalse;
+                    if (*(long*)(a + 8) != *(long*)(b + 8)) goto ReturnFalse;
                     length -= 12; a += 12; b += 12;
                 }
 #else
                 while (length >= 10)
                 {
-                    if (*(int*)a != *(int*)b) return false;
-                    if (*(int*)(a + 2) != *(int*)(b + 2)) return false;
-                    if (*(int*)(a + 4) != *(int*)(b + 4)) return false;
-                    if (*(int*)(a + 6) != *(int*)(b + 6)) return false;
-                    if (*(int*)(a + 8) != *(int*)(b + 8)) return false;
+                    if (*(int*)a != *(int*)b) goto ReturnFalse;
+                    if (*(int*)(a + 2) != *(int*)(b + 2)) goto ReturnFalse;
+                    if (*(int*)(a + 4) != *(int*)(b + 4)) goto ReturnFalse;
+                    if (*(int*)(a + 6) != *(int*)(b + 6)) goto ReturnFalse;
+                    if (*(int*)(a + 8) != *(int*)(b + 8)) goto ReturnFalse;
                     length -= 10; a += 10; b += 10;
                 }
 #endif
@@ -724,11 +711,14 @@ namespace System
                 // the zero terminator.
                 while (length > 0)
                 {
-                    if (*(int*)a != *(int*)b) break;
+                    if (*(int*)a != *(int*)b) goto ReturnFalse;
                     length -= 2; a += 2; b += 2;
                 }
 
-                return (length <= 0);
+                return true;
+
+                ReturnFalse:
+                return false;
             }
         }
 
@@ -885,12 +875,12 @@ namespace System
 
         public override bool Equals(Object obj)
         {
+            if (Object.ReferenceEquals(this, obj))
+                return true;
+                
             String str = obj as String;
             if (str == null)
                 return false;
-
-            if (Object.ReferenceEquals(this, obj))
-                return true;
 
             if (this.Length != str.Length)
                 return false;
@@ -903,11 +893,15 @@ namespace System
 
         public bool Equals(String value)
         {
-            if (value == null)
-                return false;
-
             if (Object.ReferenceEquals(this, value))
                 return true;
+            
+            // NOTE: No need to worry about casting to object here.
+            // If either side of an == comparison between strings
+            // is null, Roslyn generates a simple ceq instruction
+            // instead of calling string.op_Equality.
+            if (value == null)
+                return false;
 
             if (this.Length != value.Length)
                 return false;
@@ -967,13 +961,10 @@ namespace System
                 return true;
             }
 
-            if ((Object)a == null || (Object)b == null)
+            if ((Object)a == null || (Object)b == null || a.Length != b.Length)
             {
                 return false;
             }
-
-            if (a.Length != b.Length)
-                return false;
 
             return OrdinalCompareEqualLengthStrings(a, b);
         }
@@ -1022,9 +1013,7 @@ namespace System
         {
             if (Object.ReferenceEquals(a, b))
                 return true;
-            if (a == null || b == null)
-                return false;
-            if (a.Length != b.Length)
+            if (a == null || b == null || a.Length != b.Length)
                 return false;
             return OrdinalCompareEqualLengthStrings(a, b);
         }
@@ -1033,9 +1022,7 @@ namespace System
         {
             if (Object.ReferenceEquals(a, b))
                 return false;
-            if (a == null || b == null)
-                return true;
-            if (a.Length != b.Length)
+            if (a == null || b == null || a.Length != b.Length)
                 return true;
             return !OrdinalCompareEqualLengthStrings(a, b);
         }
@@ -1048,6 +1035,7 @@ namespace System
         {
             [NonVersionable]
 #if CORERT
+            [Intrinsic]
             get
             {
                 if ((uint)index >= _stringLength)
@@ -1097,16 +1085,17 @@ namespace System
         {
             // Huge performance improvement for short strings by doing this.
             int length = Length;
-            char[] chars = new char[length];
             if (length > 0)
             {
+                char[] chars = new char[length];
                 fixed (char* src = &_firstChar)
                     fixed (char* dest = chars)
                 {
                     wstrcpy(dest, src, length);
                 }
+                return chars;
             }
-            return chars;
+            return Array.Empty<char>();
         }
 
         // Returns a substring of this string as an array of characters.
@@ -1119,16 +1108,17 @@ namespace System
             if (length < 0)
                 throw new ArgumentOutOfRangeException("length", SR.ArgumentOutOfRange_Index);
 
-            char[] chars = new char[length];
             if (length > 0)
             {
+                char[] chars = new char[length];
                 fixed (char* src = &_firstChar)
                     fixed (char* dest = chars)
                 {
                     wstrcpy(dest, src + startIndex, length);
                 }
+                return chars;
             }
-            return chars;
+            return Array.Empty<char>();
         }
 
         public static bool IsNullOrEmpty(String value)
@@ -1220,7 +1210,7 @@ namespace System
         //
         public String[] Split(params char[] separator)
         {
-            return SplitInternal(separator, Int32.MaxValue, StringSplitOptions.None);
+            return Split(separator, Int32.MaxValue, StringSplitOptions.None);
         }
 
         // Creates an array of strings by splitting this string at each
@@ -1236,20 +1226,15 @@ namespace System
         //
         public string[] Split(char[] separator, int count)
         {
-            return SplitInternal(separator, count, StringSplitOptions.None);
+            return Split(separator, count, StringSplitOptions.None);
         }
 
         public String[] Split(char[] separator, StringSplitOptions options)
         {
-            return SplitInternal(separator, Int32.MaxValue, options);
+            return Split(separator, Int32.MaxValue, options);
         }
 
         public String[] Split(char[] separator, int count, StringSplitOptions options)
-        {
-            return SplitInternal(separator, count, options);
-        }
-
-        internal String[] SplitInternal(char[] separator, int count, StringSplitOptions options)
         {
             if (count < 0)
                 throw new ArgumentOutOfRangeException("count",
@@ -1271,7 +1256,7 @@ namespace System
             }
 
             int[] sepList = new int[Length];
-            int numReplaces = MakeSeparatorList(separator, ref sepList);
+            int numReplaces = MakeSeparatorList(separator, sepList);
 
             // Handle the special case of no replaces.
             if (0 == numReplaces)
@@ -1281,11 +1266,11 @@ namespace System
 
             if (omitEmptyEntries)
             {
-                return InternalSplitOmitEmptyEntries(sepList, null, numReplaces, count);
+                return SplitOmitEmptyEntries(sepList, null, numReplaces, count);
             }
             else
             {
-                return InternalSplitKeepEmptyEntries(sepList, null, numReplaces, count);
+                return SplitKeepEmptyEntries(sepList, null, numReplaces, count);
             }
         }
 
@@ -1311,7 +1296,7 @@ namespace System
 
             if (separator == null || separator.Length == 0)
             {
-                return SplitInternal((char[])null, count, options);
+                return Split((char[])null, count, options);
             }
 
             if ((count == 0) || (omitEmptyEntries && this.Length == 0))
@@ -1326,7 +1311,7 @@ namespace System
 
             int[] sepList = new int[Length];
             int[] lengthList = new int[Length];
-            int numReplaces = MakeSeparatorList(separator, ref sepList, ref lengthList);
+            int numReplaces = MakeSeparatorList(separator, sepList, lengthList);
 
             //Handle the special case of no replaces.
             if (0 == numReplaces)
@@ -1336,11 +1321,11 @@ namespace System
 
             if (omitEmptyEntries)
             {
-                return InternalSplitOmitEmptyEntries(sepList, lengthList, numReplaces, count);
+                return SplitOmitEmptyEntries(sepList, lengthList, numReplaces, count);
             }
             else
             {
-                return InternalSplitKeepEmptyEntries(sepList, lengthList, numReplaces, count);
+                return SplitKeepEmptyEntries(sepList, lengthList, numReplaces, count);
             }
         }
 
@@ -1349,7 +1334,7 @@ namespace System
         //     the original string will be returned regardless of the count. 
         //
 
-        private String[] InternalSplitKeepEmptyEntries(Int32[] sepList, Int32[] lengthList, Int32 numReplaces, int count)
+        private String[] SplitKeepEmptyEntries(Int32[] sepList, Int32[] lengthList, Int32 numReplaces, int count)
         {
             int currIndex = 0;
             int arrIndex = 0;
@@ -1384,7 +1369,7 @@ namespace System
 
 
         // This function will not keep the Empty String 
-        private String[] InternalSplitOmitEmptyEntries(Int32[] sepList, Int32[] lengthList, Int32 numReplaces, int count)
+        private String[] SplitOmitEmptyEntries(Int32[] sepList, Int32[] lengthList, Int32 numReplaces, int count)
         {
             // Allocate array to hold items. This array may not be 
             // filled completely in this function, we will create a 
@@ -1438,7 +1423,7 @@ namespace System
         // Args: separator  -- A string containing all of the split characters.
         //       sepList    -- an array of ints for split char indicies.
         //--------------------------------------------------------------------    
-        private unsafe int MakeSeparatorList(char[] separator, ref int[] sepList)
+        private unsafe int MakeSeparatorList(char[] separator, int[] sepList)
         {
             int foundCount = 0;
 
@@ -1487,7 +1472,7 @@ namespace System
         //       sepList    -- an array of ints for split string indicies.
         //       lengthList -- an array of ints for split string lengths.
         //--------------------------------------------------------------------    
-        private unsafe int MakeSeparatorList(String[] separators, ref int[] sepList, ref int[] lengthList)
+        private unsafe int MakeSeparatorList(String[] separators, int[] sepList, int[] lengthList)
         {
             int foundCount = 0;
             int sepListCount = sepList.Length;
@@ -1649,7 +1634,7 @@ namespace System
                 // We allocate one extra char as an interop convenience so that our strings are null-
                 // terminated, however, we don't pass the extra +1 to the array allocation because the base
                 // size of this object includes the _firstChar field.
-                string newStr = RuntimeImports.RhNewArrayAsString(String.Empty.EETypePtr, length);
+                string newStr = RuntimeImports.RhNewArrayAsString(EETypePtr.EETypePtrOf<string>(), length);
                 Debug.Assert(newStr._stringLength == length);
                 return newStr;
             }
@@ -1898,7 +1883,7 @@ namespace System
         // if this is equal to value, or a value greater than 0 if this is greater than value.
         //
 
-        private int CompareTo(Object value)
+        int IComparable.CompareTo(Object value)
         {
             if (value == null)
             {
@@ -1911,11 +1896,6 @@ namespace System
             }
 
             return String.Compare(this, (String)value, StringComparison.CurrentCulture);
-        }
-
-        int IComparable.CompareTo(Object value)
-        {
-            return this.CompareTo(value);
         }
 
         // Determines the sorting relation of StrB to the current instance.
@@ -2063,15 +2043,35 @@ namespace System
             fixed (char* pChars = &_firstChar)
             {
                 char* pCh = pChars + startIndex;
-                for (int i = 0; i < count; i++)
+
+                while (count >= 4)
+                {
+                    if (*pCh == value) goto ReturnIndex;
+                    if (*(pCh + 1) == value) goto ReturnIndex1;
+                    if (*(pCh + 2) == value) goto ReturnIndex2;
+                    if (*(pCh + 3) == value) goto ReturnIndex3;
+
+                    count -= 4;
+                    pCh += 4;
+                }
+
+                while (count > 0)
                 {
                     if (*pCh == value)
-                        return i + startIndex;
+                        goto ReturnIndex;
+
+                    count--;
                     pCh++;
                 }
-            }
 
-            return -1;
+                return -1;
+
+                ReturnIndex3: pCh++;
+                ReturnIndex2: pCh++;
+                ReturnIndex1: pCh++;
+                ReturnIndex:
+                return (int)(pCh - pChars);
+            }
         }
 
         // Returns the index of the first occurrence of any specified character in the current instance.
@@ -2276,16 +2276,36 @@ namespace System
             fixed (char* pChars = &_firstChar)
             {
                 char* pCh = pChars + startIndex;
+
                 //We search [startIndex..EndIndex]
-                for (int i = 0; i < count; i++)
+                while (count >= 4)
+                {
+                    if (*pCh == value) goto ReturnIndex;
+                    if (*(pCh - 1) == value) goto ReturnIndex1;
+                    if (*(pCh - 2) == value) goto ReturnIndex2;
+                    if (*(pCh - 3) == value) goto ReturnIndex3;
+
+                    count -= 4;
+                    pCh -= 4;
+                }
+
+                while (count > 0)
                 {
                     if (*pCh == value)
-                        return startIndex - i;
+                        goto ReturnIndex;
+
+                    count--;
                     pCh--;
                 }
-            }
 
-            return -1;
+                return -1;
+
+                ReturnIndex3: pCh--;
+                ReturnIndex2: pCh--;
+                ReturnIndex1: pCh--;
+                ReturnIndex:
+                return (int)(pCh - pChars);
+            }
         }
 
         // Returns the index of the last occurrence of any specified character in the current instance.
@@ -2688,6 +2708,12 @@ namespace System
 
             int oldLength = Length;
             int insertLength = value.Length;
+            
+            if (oldLength == 0)
+                return value;
+            if (insertLength == 0)
+                return this;
+            
             int newLength = oldLength + insertLength;
             if (newLength < 0)
                 throw new OutOfMemoryException();
@@ -2712,43 +2738,68 @@ namespace System
 
         // Replaces all instances of oldChar with newChar.
         //
-        private unsafe String ReplaceInternal(char oldChar, char newChar)
-        {
-            int firstFoundIndex = -1;
-
-            fixed (char* pChars = &_firstChar)
-            {
-                for (int i = 0; i < Length; i++)
-                {
-                    if (oldChar == pChars[i])
-                    {
-                        firstFoundIndex = i;
-                        break;
-                    }
-                }
-            }
-
-            if (-1 == firstFoundIndex)
-                return this;
-
-            char[] newChars = new char[Length];
-
-            fixed (char* pChars = &_firstChar)
-            {
-                //Copy the characters, doing the replacement as we go.
-                for (int i = 0; i < firstFoundIndex; i++)
-                    newChars[i] = pChars[i];
-
-                for (int i = firstFoundIndex; i < Length; i++)
-                    newChars[i] = (pChars[i] == oldChar) ? newChar : pChars[i];
-            }
-
-            return new string(newChars);
-        }
-
         public String Replace(char oldChar, char newChar)
         {
-            return ReplaceInternal(oldChar, newChar);
+            if (oldChar == newChar)
+                return this;
+
+            unsafe
+            {
+                int remainingLength = Length;
+
+                fixed (char* pChars = &_firstChar)
+                {
+                    char* pSrc = pChars;
+
+                    while (remainingLength > 0)
+                    {
+                        if (*pSrc == oldChar)
+                        {
+                            break;
+                        }
+
+                        remainingLength--;
+                        pSrc++;
+                    }
+                }
+
+                if (remainingLength == 0)
+                    return this;
+
+                String result = FastAllocateString(Length);
+
+                fixed (char* pChars = &_firstChar)
+                {
+                    fixed (char* pResult = &result._firstChar)
+                    {
+                        int copyLength = Length - remainingLength;
+
+                        //Copy the characters already proven not to match.
+                        if (copyLength > 0)
+                        {
+                            wstrcpy(pResult, pChars, copyLength);
+                        }
+
+                        //Copy the remaining characters, doing the replacement as we go.
+                        char* pSrc = pChars + copyLength;
+                        char* pDst = pResult + copyLength;
+
+                        do
+                        {
+                            char currentChar = *pSrc;
+                            if (currentChar == oldChar)
+                                currentChar = newChar;
+                            *pDst = currentChar;
+
+                            remainingLength--;
+                            pSrc++;
+                            pDst++;
+                        } while (remainingLength > 0);
+                    }
+                }
+
+                return result;
+            }
         }
 
         public String Replace(String oldValue, String newValue)
@@ -2863,7 +2914,13 @@ namespace System
             int oldLength = this.Length;
             if (count > oldLength - startIndex)
                 throw new ArgumentOutOfRangeException("count", SR.ArgumentOutOfRange_IndexCount);
+            
+            if (count == 0)
+                return this;
             int newLength = oldLength - count;
+            if (newLength == 0)
+                return string.Empty;
+            
             String result = FastAllocateString(newLength);
             unsafe
             {
@@ -3027,7 +3084,16 @@ namespace System
                     throw new OutOfMemoryException();
                 }
             }
-            return ConcatArray(sArgs, totalLength);
+
+            string result = FastAllocateString(totalLength);
+            int currPos = 0;
+            for (int i = 0; i < sArgs.Length; i++)
+            {
+                FillStringChecked(result, currPos, sArgs[i]);
+                currPos += sArgs[i].Length;
+            }
+
+            return result;
         }
 
         public static String Concat<T>(IEnumerable<T> values)
@@ -3040,13 +3106,11 @@ namespace System
             {
                 while (en.MoveNext())
                 {
-                    if (en.Current != null)
+                    T currentValue = en.Current;
+
+                    if (currentValue != null)
                     {
-                        // handle the case that the enumeration has null entries
-                        // and the case where their ToString() override is broken
-                        string value = en.Current.ToString();
-                        if (value != null)
-                            result.Append(value);
+                        result.Append(currentValue.ToString());
                     }
                 }
             }
@@ -3063,10 +3127,7 @@ namespace System
             {
                 while (en.MoveNext())
                 {
-                    if (en.Current != null)
-                    {
-                        result.Append(en.Current);
-                    }
+                    result.Append(en.Current);
                 }
             }
             return StringBuilderCache.GetStringAndRelease(result);
@@ -3100,24 +3161,19 @@ namespace System
 
         public static String Concat(String str0, String str1, String str2)
         {
-            if (str0 == null && str1 == null && str2 == null)
+            if (IsNullOrEmpty(str0))
             {
-                return String.Empty;
+                return Concat(str1, str2);
             }
 
-            if (str0 == null)
+            if (IsNullOrEmpty(str1))
             {
-                str0 = String.Empty;
+                return Concat(str0, str2);
             }
 
-            if (str1 == null)
+            if (IsNullOrEmpty(str2))
             {
-                str1 = String.Empty;
-            }
-
-            if (str2 == null)
-            {
-                str2 = String.Empty;
+                return Concat(str0, str1);
             }
 
             int totalLength = str0.Length + str1.Length + str2.Length;
@@ -3132,29 +3188,24 @@ namespace System
 
         public static String Concat(String str0, String str1, String str2, String str3)
         {
-            if (str0 == null && str1 == null && str2 == null && str3 == null)
+            if (IsNullOrEmpty(str0))
             {
-                return String.Empty;
+                return Concat(str1, str2, str3);
             }
 
-            if (str0 == null)
+            if (IsNullOrEmpty(str1))
             {
-                str0 = String.Empty;
+                return Concat(str0, str2, str3);
             }
 
-            if (str1 == null)
+            if (IsNullOrEmpty(str2))
             {
-                str1 = String.Empty;
+                return Concat(str0, str1, str3);
             }
 
-            if (str2 == null)
+            if (IsNullOrEmpty(str3))
             {
-                str2 = String.Empty;
-            }
-
-            if (str3 == null)
-            {
-                str3 = String.Empty;
+                return Concat(str0, str1, str2);
             }
 
             int totalLength = str0.Length + str1.Length + str2.Length + str3.Length;
@@ -3168,42 +3219,66 @@ namespace System
             return result;
         }
 
-        private static String ConcatArray(String[] values, int totalLength)
-        {
-            String result = FastAllocateString(totalLength);
-            int currPos = 0;
-
-            for (int i = 0; i < values.Length; i++)
-            {
-                FillStringChecked(result, currPos, values[i]);
-                currPos += values[i].Length;
-            }
-
-            return result;
-        }
-
         public static String Concat(params String[] values)
         {
             if (values == null)
                 throw new ArgumentNullException("values");
-            int totalLength = 0;
 
-            // Always make a copy to prevent changing the array on another thread.
-            String[] internalValues = new String[values.Length];
+            // It's possible that the input values array could be changed concurrently on another
+            // thread, such that we can't trust that each read of values[i] will be equivalent.
+            // Worst case, we can make a defensive copy of the array and use that, but we first
+            // optimistically try the allocation and copies assuming that the array isn't changing,
+            // which represents the 99.999% case, in particular since string.Concat is used for
+            // string concatenation by the languages, with the input array being a params array.
 
+            // Sum the lengths of all input strings
+            long totalLengthLong = 0;
             for (int i = 0; i < values.Length; i++)
             {
                 string value = values[i];
-                internalValues[i] = ((value == null) ? (String.Empty) : (value));
-                totalLength += internalValues[i].Length;
-                // check for overflow
-                if (totalLength < 0)
+                if (value != null)
                 {
-                    throw new OutOfMemoryException();
+                    totalLengthLong += value.Length;
                 }
             }
 
-            return ConcatArray(internalValues, totalLength);
+            // If it's too long, fail, or if it's empty, return an empty string.
+            if (totalLengthLong > int.MaxValue)
+            {
+                throw new OutOfMemoryException();
+            }
+            int totalLength = (int)totalLengthLong;
+            if (totalLength == 0)
+            {
+                return string.Empty;
+            }
+
+            // Allocate a new string and copy each input string into it
+            string result = FastAllocateString(totalLength);
+            int copiedLength = 0;
+            for (int i = 0; i < values.Length; i++)
+            {
+                string value = values[i];
+                if (!string.IsNullOrEmpty(value))
+                {
+                    int valueLen = value.Length;
+                    if (valueLen > totalLength - copiedLength)
+                    {
+                        copiedLength = -1;
+                        break;
+                    }
+
+                    FillStringChecked(result, copiedLength, value);
+                    copiedLength += valueLen;
+                }
+            }
+
+            // If we copied exactly the right amount, return the new string.  Otherwise,
+            // something changed concurrently to mutate the input array: fall back to
+            // doing the concatenation again, but this time with a defensive copy. This
+            // fall back should be extremely rare.
+            return copiedLength == totalLength ? result : Concat((string[])values.Clone());
+
         }
 
         IEnumerator<char> IEnumerable<char>.GetEnumerator()

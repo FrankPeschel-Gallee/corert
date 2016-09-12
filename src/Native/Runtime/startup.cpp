@@ -7,7 +7,7 @@
 #include "daccess.h"
 #include "PalRedhawkCommon.h"
 #include "PalRedhawk.h"
-#include "assert.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "varint.h"
@@ -19,6 +19,7 @@
 #include "event.h"
 #include "RWLock.h"
 #include "threadstore.h"
+#include "threadstore.inl"
 #include "RuntimeInstance.h"
 #include "rhbinder.h"
 #include "CachedInterfaceDispatch.h"
@@ -35,16 +36,20 @@ unsigned __int64 g_startupTimelineEvents[NUM_STARTUP_TIMELINE_EVENTS] = { 0 };
 HANDLE RtuCreateRuntimeInstance(HANDLE hPalInstance);
 
 
-UInt32 _fls_index = FLS_OUT_OF_INDEXES;
-
-
+#ifdef PLATFORM_UNIX
+Int32 __stdcall RhpHardwareExceptionHandler(UIntNative faultCode, UIntNative faultAddress, PAL_LIMITED_CONTEXT* palContext, UIntNative* arg0Reg, UIntNative* arg1Reg);
+#else
 Int32 __stdcall RhpVectoredExceptionHandler(PEXCEPTION_POINTERS pExPtrs);
+#endif
+
 void CheckForPalFallback();
 void DetectCPUFeatures();
 
 extern RhConfig * g_pRhConfig;
 
 EXTERN_C bool g_fHasFastFxsave = false;
+
+CrstStatic g_CastCacheLock;
 
 bool InitDLL(HANDLE hPalInstance)
 {
@@ -65,7 +70,11 @@ bool InitDLL(HANDLE hPalInstance)
         return false;
 
 #ifndef APP_LOCAL_RUNTIME
+#ifndef PLATFORM_UNIX
     PalAddVectoredExceptionHandler(1, RhpVectoredExceptionHandler);
+#else
+    PalSetHardwareExceptionHandler(RhpHardwareExceptionHandler);
+#endif
 #endif
 
     //
@@ -87,12 +96,6 @@ bool InitDLL(HANDLE hPalInstance)
     UInt32 dwStressLogLevel = g_pRhConfig->GetStressLogLevel();
 
     unsigned facility = (unsigned)LF_ALL;
-#ifdef _DEBUG
-    if (dwTotalStressLogSize == 0)
-        dwTotalStressLogSize = 1024 * STRESSLOG_CHUNK_SIZE;
-    if (dwStressLogLevel == 0)
-        dwStressLogLevel = LL_INFO1000;
-#endif
     unsigned dwPerThreadChunks = (dwTotalStressLogSize / 24) / STRESSLOG_CHUNK_SIZE;
     if (dwTotalStressLogSize != 0)
     {
@@ -103,6 +106,9 @@ bool InitDLL(HANDLE hPalInstance)
 #endif // STRESS_LOG
 
     DetectCPUFeatures();
+
+    if (!g_CastCacheLock.InitNoThrow(CrstType::CrstCastCache))
+        return false;
 
     return true;
 }
@@ -226,6 +232,8 @@ void DllThreadAttach(HANDLE /*hPalInstance*/)
     // threads themselves will do this on their first reverse pinvoke.
 }
 
+volatile bool g_processShutdownHasStarted = false;
+
 void DllThreadDetach()
 {
     // BEWARE: loader lock is held here!
@@ -234,18 +242,30 @@ void DllThreadDetach()
     Thread* pCurrentThread = ThreadStore::GetCurrentThreadIfAvailable();
     if (pCurrentThread != NULL && !pCurrentThread->IsDetached())
     {
-        ASSERT_UNCONDITIONALLY("Detaching thread whose home fiber has not been detached");
-        RhFailFast();
+        // Once shutdown starts, RuntimeThreadShutdown callbacks are ignored, implying that
+        // it is no longer guaranteed that exiting threads will be detached.
+        if (!g_processShutdownHasStarted)
+        {
+            ASSERT_UNCONDITIONALLY("Detaching thread whose home fiber has not been detached");
+            RhFailFast();
+        }
     }
 }
 
 void __stdcall RuntimeThreadShutdown(void* thread)
 {
-    // Note: loader lock is *not* held here!
+    // Note: loader lock is normally *not* held here!
+    // The one exception is that the loader lock may be held during the thread shutdown callback
+    // that is made for the single thread that runs the final stages of orderly process
+    // shutdown (i.e., the thread that delivers the DLL_PROCESS_DETACH notifications when the
+    // process is being torn down via an ExitProcess call).
     UNREFERENCED_PARAMETER(thread);
     ASSERT((Thread*)thread == ThreadStore::GetCurrentThread());
 
-    ThreadStore::DetachCurrentThread();
+    if (!g_processShutdownHasStarted)
+    {
+        ThreadStore::DetachCurrentThread();
+    }
 }
 
 COOP_PINVOKE_HELPER(UInt32_BOOL, RhpRegisterModule, (ModuleHeader *pModuleHeader))
@@ -269,17 +289,6 @@ COOP_PINVOKE_HELPER(UInt32_BOOL, RhpRegisterModule, (ModuleHeader *pModuleHeader
         g_registerModuleCount++;
     }
 #endif // PROFILE_STARTUP
-
-    return UInt32_TRUE;
-}
-
-
-COOP_PINVOKE_HELPER(UInt32_BOOL, RhpRegisterSimpleModule, (SimpleModuleHeader *pModuleHeader))
-{
-    RuntimeInstance * pInstance = GetRuntimeInstance();
-
-    if (!pInstance->RegisterSimpleModule(pModuleHeader))
-        return UInt32_FALSE;
 
     return UInt32_TRUE;
 }
@@ -324,15 +333,13 @@ HANDLE RtuCreateRuntimeInstance(HANDLE hPalInstance)
 // @TODO: Eventually we'll probably have a hosting API and explicit shutdown request. When that happens we'll
 // something more sophisticated here since we won't be able to rely on the OS cleaning up after us.
 //
-COOP_PINVOKE_HELPER(void, RhpShutdownHelper, (UInt32 /*uExitCode*/))
+COOP_PINVOKE_HELPER(void, RhpShutdown, ())
 {
-    // If the classlib has requested it perform a last pass of the finalizer thread.
-    RedhawkGCInterface::ShutdownFinalization();
-
 #ifdef FEATURE_PROFILING
     GetRuntimeInstance()->WriteProfileInfo();
 #endif // FEATURE_PROFILING
+    // Indicate that runtime shutdown is complete and that the caller is about to start shutting down the entire process.
+    g_processShutdownHasStarted = true;
 }
 
 #endif // !DACCESS_COMPILE
-

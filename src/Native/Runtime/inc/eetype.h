@@ -12,8 +12,8 @@
 class MdilModule;
 class EEType;
 class OptionalFields;
-
-
+class ModuleManager;
+enum GenericVarianceType : UInt8;
 
 //-------------------------------------------------------------------------------------------------
 // Array of these represents the interfaces implemented by a type
@@ -164,6 +164,10 @@ enum EETypeField
     ETF_SealedVirtualSlots,
     ETF_DynamicTemplateType,
     ETF_DynamicDispatchMap,
+#if CORERT
+    ETF_GenericDefinition,
+    ETF_GenericComposition,
+#endif
 };
 
 //-------------------------------------------------------------------------------------------------
@@ -214,6 +218,9 @@ private:
     UInt16              m_usNumVtableSlots;
     UInt16              m_usNumInterfaces;
     UInt32              m_uHashCode;
+#if defined(CORERT)
+    ModuleManager**     m_ppModuleManager;
+#endif
 
     TgtPTR_Void         m_VTable[];  // make this explicit so the binder gets the right alignment
 
@@ -337,7 +344,6 @@ public:
     PTR_PTR_Code get_SlotPtr(UInt16 slotNumber);
 
     PTR_Code get_SealedVirtualSlot(UInt16 slotNumber);
-    void set_SealedVirtualSlot(PTR_Code pValue, UInt16 slotNumber);
 
     Kinds get_Kind();
 
@@ -374,8 +380,6 @@ public:
     // A parameterized type shape is 0 to indicate that it is a pointer type, 
     // and non-zero to indicate that it is an array type
     UInt32 get_ParameterizedTypeShape() { return m_uBaseSize; }
-
-    void set_RelatedParameterType(EEType * pParameterType);
 
     bool get_IsValueType()
         { return ((m_usFlags & (UInt16)ValueTypeFlag) != 0); }
@@ -440,6 +444,11 @@ public:
 
     bool IsGeneric()
         { return (m_usFlags & IsGenericFlag) != 0; }
+
+#if defined(CORERT)
+    ModuleManager* GetModuleManager()
+         { return *m_ppModuleManager; }
+#endif
 
 #ifndef BINDER
     DispatchMap *GetDispatchMap();
@@ -511,9 +520,6 @@ public:
     // Retrieve the value type T from a Nullable<T>.
     EEType * GetNullableType();
 
-    // Set the value of type T for dynamic instantiations of Nullable<T>
-    void SetNullableType(EEType * pEEType);
-
     // Retrieve the offset of the value embedded in a Nullable<T>.
     UInt8 GetNullableValueOffset();
 
@@ -525,16 +531,27 @@ public:
     bool HasDynamicallyAllocatedDispatchMap()
         { return (get_RareFlags() & HasDynamicallyAllocatedDispatchMapFlag) != 0; }
 
+#if CORERT
+    // Retrieve the generic type definition EEType for this generic instance
+    EEType * get_GenericDefinition();
+
+    // Retrieve the number of generic arguments for this generic type instance
+    UInt32 get_GenericArity();
+
+    // Retrieve the generic arguments to this type
+    EEType** get_GenericArguments();
+
+    // Retrieve the generic variance associated with this type
+    GenericVarianceType* get_GenericVariance();
+#endif
+
     // Retrieve template used to create the dynamic type
     EEType * get_DynamicTemplateType();
-    void set_DynamicTemplateType(EEType * pTemplate);
 
-    void SetHashCode(UInt32 value);
     UInt32 GetHashCode();
 
     // Retrieve optional fields associated with this EEType. May be NULL if no such fields exist.
     inline PTR_OptionalFields get_OptionalFields();
-    void set_OptionalFields(OptionalFields * pOptionalFields);
 
     // Retrieve the amount of padding added to value type fields in order to align them for boxed allocation
     // on the GC heap. This value to can be used along with the result of get_BaseSize to determine the size

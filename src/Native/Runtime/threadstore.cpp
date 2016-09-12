@@ -7,7 +7,7 @@
 #include "daccess.h"
 #include "PalRedhawkCommon.h"
 #include "PalRedhawk.h"
-#include "assert.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "varint.h"
@@ -19,6 +19,7 @@
 #include "event.h"
 #include "RWLock.h"
 #include "threadstore.h"
+#include "threadstore.inl"
 #include "RuntimeInstance.h"
 #include "ObjectLayout.h"
 #include "TargetPtrs.h"
@@ -62,6 +63,7 @@ ThreadStore::ThreadStore() :
     m_ThreadList(),
     m_Lock()
 {
+    SaveCurrentThreadOffsetForDAC();
 }
 
 ThreadStore::~ThreadStore()
@@ -106,9 +108,6 @@ PTR_Thread ThreadStore::GetSuspendingThread()
 
 GPTR_DECL(RuntimeInstance, g_pTheRuntimeInstance);
 
-extern UInt32 _fls_index;
-
-
 // static 
 void ThreadStore::AttachCurrentThread(bool fAcquireThreadStoreLock)
 {
@@ -139,6 +138,13 @@ void ThreadStore::AttachCurrentThread(bool fAcquireThreadStoreLock)
     //
     pAttachingThread->Construct();
     ASSERT(pAttachingThread->m_ThreadStateFlags == Thread::TSF_Unknown);
+
+    // The runtime holds the thread store lock for the duration of thread suspension for GC, so let's check to 
+    // see if that's going on and, if so, use a proper wait instead of the RWL's spinning.  NOTE: when we are 
+    // called with fAcquireThreadStoreLock==false, we are being called in a situation where the GC is trying to 
+    // init a GC thread, so we must honor the flag to mean "do not block on GC" or else we will deadlock.
+    if (fAcquireThreadStoreLock && (RhpTrapThreads != 0))
+        RedhawkGCInterface::WaitForGCCompletion();
 
     ThreadStore* pTS = GetThreadStore();
     ReaderWriterLock::WriteHolder write(&pTS->m_Lock, fAcquireThreadStoreLock);
@@ -173,7 +179,7 @@ void ThreadStore::DetachCurrentThread()
     {
         return;
     }
-        
+
 #ifdef STRESS_LOG
     ThreadStressLog * ptsl = reinterpret_cast<ThreadStressLog *>(
         pDetachingThread->GetThreadStressLog());
@@ -289,12 +295,6 @@ void ThreadStore::ResumeAllThreads(CLREventStatic* pCompletionEvent)
     UnlockThreadStore();
 } // ResumeAllThreads
 
-// static
-bool ThreadStore::IsTrapThreadsRequested()
-{
-    return (RhpTrapThreads != 0);
-}
-
 void ThreadStore::WaitForSuspendComplete()
 {
     UInt32 waitResult = m_SuspendCompleteEvent.Wait(INFINITE, false);
@@ -306,7 +306,7 @@ C_ASSERT(sizeof(Thread) == sizeof(ThreadBuffer));
 
 EXTERN_C Thread * FASTCALL RhpGetThread();
 
-DECLSPEC_THREAD ThreadBuffer tls_CurrentThread =
+EXTERN_C DECLSPEC_THREAD ThreadBuffer tls_CurrentThread =
 { 
     { 0 },                              // m_rgbAllocContextBuffer
     Thread::TSF_Unknown,                // m_ThreadStateFlags
@@ -317,81 +317,62 @@ DECLSPEC_THREAD ThreadBuffer tls_CurrentThread =
     INVALID_HANDLE_VALUE,               // m_hPalThread
     0,                                  // m_ppvHijackedReturnAddressLocation
     0,                                  // m_pvHijackedReturnAddress
+    0,                                  // m_pExInfoStackHead
     0,                                  // m_pStackLow
     0,                                  // m_pStackHigh
-    0,                                  // m_uPalThreadId
+    0,                                  // m_pTEB
+    0,                                  // m_uPalThreadIdForLogging
 };
+
+#ifdef CORERT
+Thread * FASTCALL RhpGetThread()
+{
+    return (Thread *)&tls_CurrentThread;
+}
+#endif
 
 // static
 void * ThreadStore::CreateCurrentThreadBuffer()
 {
     void * pvBuffer = &tls_CurrentThread;
 
-#if !defined(CORERT) // @TODO: CORERT: No assembly routine defined to verify against.
     ASSERT(RhpGetThread() == pvBuffer);
-#endif // !defined(CORERT)
 
     return pvBuffer;
 }
-
-// static
-Thread * ThreadStore::RawGetCurrentThread()
-{
-    return (Thread *) &tls_CurrentThread;
-}
-
-// static
-Thread * ThreadStore::GetCurrentThread()
-{
-    Thread * pCurThread = RawGetCurrentThread();
-
-    // If this assert fires, and you only need the Thread pointer if the thread has ever previously
-    // entered the runtime, then you should be using GetCurrentThreadIfAvailable instead.
-    ASSERT(pCurThread->IsInitialized());    
-    return pCurThread;
-};
-
-// static
-Thread * ThreadStore::GetCurrentThreadIfAvailable()
-{
-    Thread * pCurThread = RawGetCurrentThread();
-    if (pCurThread->IsInitialized())
-        return pCurThread;
-
-    return NULL;
-}
 #endif // !DACCESS_COMPILE
 
-#ifdef _MSC_VER
+
+#ifdef _WIN32
+
+#ifndef DACCESS_COMPILE
+
 // Keep a global variable in the target process which contains
 // the address of _tls_index.  This is the breadcrumb needed
 // by DAC to read _tls_index since we don't control the 
 // declaration of _tls_index directly.
+
+// volatile to prevent the compiler from removing the unused global variable
+volatile UInt32 * p_tls_index;
+volatile UInt32 SECTIONREL__tls_CurrentThread;
+
 EXTERN_C UInt32 _tls_index;
-GPTR_IMPL_INIT(UInt32, p_tls_index, &_tls_index);
-#endif // _MSC_VER
 
-#ifndef DACCESS_COMPILE
+void ThreadStore::SaveCurrentThreadOffsetForDAC()
+{
+    p_tls_index = &_tls_index;
 
-// We must prevent the linker from removing the unused global variable 
-// that DAC will be looking at to find _tls_index.
-#ifdef _MSC_VER
-#ifdef _WIN64
-#pragma comment(linker, "/INCLUDE:?p_tls_index@@3PEAIEA")
-#else
-#pragma comment(linker, "/INCLUDE:?p_tls_index@@3PAIA")
-#endif
-#endif // _MSC_VER
+    UInt8 * pTls = *(UInt8 **)(PalNtCurrentTeb() + OFFSETOF__TEB__ThreadLocalStoragePointer);
+
+    UInt8 * pOurTls = *(UInt8 **)(pTls + (_tls_index * sizeof(void*)));
+
+    SECTIONREL__tls_CurrentThread = (UInt32)((UInt8 *)&tls_CurrentThread - pOurTls);
+}
 
 #else // DACCESS_COMPILE
 
-#if defined(BIT64)
-#define OFFSETOF__TLS__tls_CurrentThread            0x20
-#elif defined(_ARM_)
-#define OFFSETOF__TLS__tls_CurrentThread            0x10
-#else
-#define OFFSETOF__TLS__tls_CurrentThread            0x08
-#endif
+GPTR_IMPL(UInt32, p_tls_index);
+GVAL_IMPL(UInt32, SECTIONREL__tls_CurrentThread);
 
 //
 // This routine supports the !Thread debugger extension routine
@@ -412,10 +393,19 @@ PTR_Thread ThreadStore::GetThreadFromTEB(TADDR pTEB)
     if (pOurTls == NULL)
         return NULL;
 
-    return (PTR_Thread)(pOurTls + OFFSETOF__TLS__tls_CurrentThread);
+    return (PTR_Thread)(pOurTls + SECTIONREL__tls_CurrentThread);
 }
 
 #endif // DACCESS_COMPILE
+
+#else // _WIN32
+
+void ThreadStore::SaveCurrentThreadOffsetForDAC()
+{
+}
+
+#endif // _WIN32
+
 
 #ifndef DACCESS_COMPILE
 

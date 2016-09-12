@@ -24,9 +24,13 @@ namespace Internal.TypeSystem.Ecma
             public const int Final                  = 0x0010;
             public const int NoInlining             = 0x0020;
             public const int AggressiveInlining     = 0x0040;
+            public const int RuntimeImplemented     = 0x0080;
+            public const int InternalCall           = 0x0100;
 
-            public const int AttributeMetadataCache = 0x0100;
-            public const int Intrinsic            = 0x0200;
+            public const int AttributeMetadataCache = 0x1000;
+            public const int Intrinsic              = 0x2000;
+            public const int NativeCallable         = 0x4000;
+            public const int RuntimeExport          = 0x8000;
         };
 
         private EcmaType _type;
@@ -145,6 +149,12 @@ namespace Internal.TypeSystem.Ecma
                 if ((methodImplAttributes & MethodImplAttributes.AggressiveInlining) != 0)
                     flags |= MethodFlags.AggressiveInlining;
 
+                if ((methodImplAttributes & MethodImplAttributes.Runtime) != 0)
+                    flags |= MethodFlags.RuntimeImplemented;
+
+                if ((methodImplAttributes & MethodImplAttributes.InternalCall) != 0)
+                    flags |= MethodFlags.InternalCall;
+
                 flags |= MethodFlags.BasicMetadataCache;
             }
 
@@ -166,6 +176,22 @@ namespace Internal.TypeSystem.Ecma
                         if (metadataReader.StringComparer.Equals(nameHandle, "IntrinsicAttribute"))
                         {
                             flags |= MethodFlags.Intrinsic;
+                        }
+                    }
+                    else
+                    if (metadataReader.StringComparer.Equals(namespaceHandle, "System.Runtime.InteropServices"))
+                    {
+                        if (metadataReader.StringComparer.Equals(nameHandle, "NativeCallableAttribute"))
+                        {
+                            flags |= MethodFlags.NativeCallable;
+                        }
+                    }
+                    else
+                    if (metadataReader.StringComparer.Equals(namespaceHandle, "System.Runtime"))
+                    {
+                        if (metadataReader.StringComparer.Equals(nameHandle, "RuntimeExportAttribute"))
+                        {
+                            flags |= MethodFlags.RuntimeExport;
                         }
                     }
                 }
@@ -236,11 +262,43 @@ namespace Internal.TypeSystem.Ecma
             }
         }
 
+        public override bool IsRuntimeImplemented
+        {
+            get
+            {
+                return (GetMethodFlags(MethodFlags.BasicMetadataCache | MethodFlags.RuntimeImplemented) & MethodFlags.RuntimeImplemented) != 0;
+            }
+        }
+
         public override bool IsIntrinsic
         {
             get
             {
                 return (GetMethodFlags(MethodFlags.AttributeMetadataCache | MethodFlags.Intrinsic) & MethodFlags.Intrinsic) != 0;
+            }
+        }
+
+        public override bool IsInternalCall
+        {
+            get
+            {
+                return (GetMethodFlags(MethodFlags.BasicMetadataCache | MethodFlags.InternalCall) & MethodFlags.InternalCall) != 0;
+            }
+        }
+
+        public override bool IsNativeCallable
+        {
+            get
+            {
+                return (GetMethodFlags(MethodFlags.AttributeMetadataCache | MethodFlags.NativeCallable) & MethodFlags.NativeCallable) != 0;
+            }
+        }
+
+        public override bool IsRuntimeExport
+        {
+            get
+            {
+                return (GetMethodFlags(MethodFlags.AttributeMetadataCache | MethodFlags.RuntimeExport) & MethodFlags.RuntimeExport) != 0;
             }
         }
 
@@ -309,8 +367,8 @@ namespace Internal.TypeSystem.Ecma
 
         public override bool HasCustomAttribute(string attributeNamespace, string attributeName)
         {
-            return MetadataReader.HasCustomAttribute(MetadataReader.GetMethodDefinition(_handle).GetCustomAttributes(),
-                attributeNamespace, attributeName);
+            return !MetadataReader.GetCustomAttributeHandle(MetadataReader.GetMethodDefinition(_handle).GetCustomAttributes(),
+                attributeNamespace, attributeName).IsNil;
         }
 
         public override string ToString()
@@ -335,12 +393,15 @@ namespace Internal.TypeSystem.Ecma
             MethodImport import = metadataReader.GetMethodDefinition(_handle).GetImport();
             string name = metadataReader.GetString(import.Name);
 
+            ModuleReference moduleRef = metadataReader.GetModuleReference(import.Module);
+            string moduleName = metadataReader.GetString(moduleRef.Name);
+
             // Spot check the enums match
             Debug.Assert((int)MethodImportAttributes.CallingConventionStdCall == (int)PInvokeAttributes.CallingConventionStdCall);
             Debug.Assert((int)MethodImportAttributes.CharSetAuto == (int)PInvokeAttributes.CharSetAuto);
             Debug.Assert((int)MethodImportAttributes.CharSetUnicode == (int)PInvokeAttributes.CharSetUnicode);
 
-            return new PInvokeMetadata(name, (PInvokeAttributes)import.Attributes);
+            return new PInvokeMetadata(moduleName, name, (PInvokeAttributes)import.Attributes);
         }
     }
 }

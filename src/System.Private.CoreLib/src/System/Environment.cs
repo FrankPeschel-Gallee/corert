@@ -21,7 +21,6 @@ using Microsoft.Win32;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using Internal.DeveloperExperience;
-using Internal.Runtime.CompilerHelpers;
 
 namespace System
 {
@@ -82,7 +81,8 @@ namespace System
         {
             get
             {
-                return RuntimeImports.RhHasShutdownStarted();
+                // .NET Core does not have shutdown finalization
+                return false;
             }
         }
 
@@ -119,15 +119,6 @@ namespace System
         }
 #endif
 
-#if CORERT
-        // Moved to startup sequence in StartupCodeHelpers.Initialize().
-#else
-        static Environment()
-        {
-            RuntimeImports.RhEnableShutdownFinalization(0xffffffffu);
-        }
-#endif
-
         public static String StackTrace
         {
             get
@@ -137,7 +128,7 @@ namespace System
                 // Initial array length is deliberately chosen to be 0 so that we reallocate to exactly the right size
                 // for StackFrameHelper.FormatStackTrace call. If we want to do this optimistically with one call change
                 // FormatStackTrace to accept an explicit length.
-                IntPtr[] frameIPs = new IntPtr[0];
+                IntPtr[] frameIPs = Array.Empty<IntPtr>();
                 int cFrames = RuntimeImports.RhGetCurrentThreadStackTrace(frameIPs);
                 if (cFrames < 0)
                 {

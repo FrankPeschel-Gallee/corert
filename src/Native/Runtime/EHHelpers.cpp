@@ -6,7 +6,7 @@
 #include "CommonTypes.h"
 #include "CommonMacros.h"
 #include "daccess.h"
-#include "assert.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "shash.h"
@@ -19,41 +19,35 @@
 #include "Crst.h"
 #include "RuntimeInstance.h"
 #include "event.h"
-#include "threadstore.h"
 #include "regdisplay.h"
 #include "StackFrameIterator.h"
 #include "thread.h"
+#include "threadstore.h"
+#include "threadstore.inl"
 #include "stressLog.h"
 
-// Find the module containing the given address, which might be a return address from a managed function. The
-// address may be to another managed function, or it may be to an unmanaged function, or it may be to a GC
-// hijack. The address may also refer to an EEType if we've been called from RhpGetClasslibFunction. If it is
-// a GC hijack, we will recgonize that and use the real return address, updating the address passed in.
-static Module * FindModuleRespectingReturnAddressHijacks(void * address)
+// Find the code manager containing the given address, which might be a return address from a managed function. The
+// address may be to another managed function, or it may be to an unmanaged function. The address may also refer to 
+// an EEType.
+static ICodeManager * FindCodeManagerForClasslibFunction(void * address)
 {
     RuntimeInstance * pRI = GetRuntimeInstance();
 
-    // Try looking up the module assuming the address is for code first. This is expected to be most common.
-    Module * pModule = pRI->FindModuleByCodeAddress(address);
-    if (pModule == NULL)
-    {
-        // Less common, we will look for the address in any of the sections of the module.  This is slower, but is 
-        // necessary for EEType pointers and jump stubs.
-        pModule = pRI->FindModuleByAddress(address);
+    // Try looking up the code manager assuming the address is for code first. This is expected to be most common.
+    ICodeManager * pCodeManager = pRI->FindCodeManagerByAddress(address);
+    if (pCodeManager != NULL)
+        return pCodeManager;
 
-        // Corner-case: The thread might be hijacked -- @TODO: this is a bit brittle because there is no validation that
-        // the hijacked return address from the thread is actually related to place where the caller got the hijack 
-        // target.  
-        Thread * pCurThread = ThreadStore::GetCurrentThread();
-        if ((pModule == NULL) && pCurThread->IsHijacked() && Thread::IsHijackTarget(address))
-        {
-            pModule = pRI->FindModuleByCodeAddress(pCurThread->GetHijackedReturnAddress());
+    // @TODO: CORERT: Do we need to make this work for CoreRT?
+    // Less common, we will look for the address in any of the sections of the module.  This is slower, but is 
+    // necessary for EEType pointers and jump stubs.
+    Module * pModule = pRI->FindModuleByAddress(address);
+    if (pModule != NULL)
+        return pModule;
 
-            ASSERT_MSG(pModule != NULL, "expected to find the module for a hijacked return address");
-        }
-    }
+    ASSERT_MSG(!Thread::IsHijackTarget(address), "not expected to be called with hijacked return address");
 
-    return pModule;
+    return NULL;
 }
 
 COOP_PINVOKE_HELPER(Boolean, RhpEHEnumInitFromStackFrameIterator, (
@@ -70,68 +64,23 @@ COOP_PINVOKE_HELPER(Boolean, RhpEHEnumNext, (EHEnum* pEHEnum, EHClause* pEHClaus
     return pEHEnum->m_pCodeManager->EHEnumNext(&pEHEnum->m_state, pEHClause);
 }
 
-//------------------------------------------------------------------------------------------------------------
-// @TODO:EXCEPTIONS: the code below is related to throwing exceptions out of Rtm. If we did not have to throw
-// out of Rtm, then we would note have to have the code below to get a classlib exception object given
-// an exception id, or the special functions to back up the MDIL THROW_* instructions, or the allocation
-// failure helper. If we could move to a world where we never throw out of Rtm, perhaps by moving parts
-// of Rtm that do need to throw out to Bartok- or Binder-generated functions, then we could remove all of this.
-//------------------------------------------------------------------------------------------------------------
-
-
-// Constants used with RhpGetClasslibFunction, to indicate which classlib function
-// we are interested in. 
-// Note: make sure you change the def in rtm\System\Runtime\exceptionhandling.cs if you change this!
-enum ClasslibFunctionId
-{
-    GetRuntimeException = 0,
-    FailFast = 1,
-    UnhandledExceptionHandler = 2,
-    AppendExceptionStackFrame = 3,
-};
-
 // Unmanaged helper to locate one of two classlib-provided functions that the runtime needs to 
 // implement throwing of exceptions out of Rtm, and fail-fast. This may return NULL if the classlib
 // found via the provided address does not have the necessary exports.
 COOP_PINVOKE_HELPER(void *, RhpGetClasslibFunction, (void * address, ClasslibFunctionId functionId))
 {
-    // Find the module contianing the given address, which is an address into some managed module. It could
+    // Find the code manager for the given address, which is an address into some managed module. It could
     // be code, or it could be an EEType. No matter what, it's an address into a managed module in some non-Rtm
     // type system.
-    Module * pModule = FindModuleRespectingReturnAddressHijacks(address);
-     
+    ICodeManager * pCodeManager = FindCodeManagerForClasslibFunction(address);
+
     // If the address isn't in a managed module then we have no classlib function.
-    if (pModule == NULL)
+    if (pCodeManager == NULL)
     {
         return NULL;
     }
 
-    // Now, find the classlib module that the first module was compiled against. This one will contain definitions
-    // for the classlib functions we need here at runtime.
-    Module * pClasslibModule = pModule->GetClasslibModule();
-    ASSERT(pClasslibModule != NULL);
-
-    // Lookup the method and return it. If we don't find it, we just return NULL.
-    void * pMethod = NULL;
-    
-    if (functionId == GetRuntimeException)
-    {
-        pMethod = pClasslibModule->GetClasslibRuntimeExceptionHelper();
-    }
-    else if (functionId == AppendExceptionStackFrame)
-    {
-        pMethod = pClasslibModule->GetClasslibAppendExceptionStackFrameHelper();
-    }
-    else if (functionId == FailFast)
-    {
-        pMethod = pClasslibModule->GetClasslibFailFastHelper();
-    }
-    else if (functionId == UnhandledExceptionHandler)
-    {
-        pMethod = pClasslibModule->GetClasslibUnhandledExceptionHandlerHelper();
-    }
-
-    return pMethod;
+    return pCodeManager->GetClasslibFunction(functionId);
 }
 
 COOP_PINVOKE_HELPER(void, RhpValidateExInfoStack, ())
@@ -160,7 +109,7 @@ COOP_PINVOKE_HELPER(void, RhpSetThreadDoNotTriggerGC, ())
     pThisThread->SetDoNotTriggerGc();
 }
 
-COOP_PINVOKE_HELPER(Int32, RhGetModuleFileName, (HANDLE moduleHandle, _Out_ wchar_t** pModuleNameOut))
+COOP_PINVOKE_HELPER(Int32, RhGetModuleFileName, (HANDLE moduleHandle, _Out_ const TCHAR** pModuleNameOut))
 {
     return PalGetModuleFileName(pModuleNameOut, moduleHandle);
 }
@@ -171,7 +120,18 @@ COOP_PINVOKE_HELPER(void, RhpCopyContextFromExInfo,
     UNREFERENCED_PARAMETER(cbOSContext);
     ASSERT(cbOSContext >= sizeof(CONTEXT));
     CONTEXT* pContext = (CONTEXT *)pOSContext;
-#ifdef _AMD64_
+#if defined(UNIX_AMD64_ABI)
+    pContext->Rip = pPalContext->IP;
+    pContext->Rsp = pPalContext->Rsp;
+    pContext->Rbp = pPalContext->Rbp;
+    pContext->Rdx = pPalContext->Rdx;
+    pContext->Rax = pPalContext->Rax;
+    pContext->Rbx = pPalContext->Rbx;
+    pContext->R12 = pPalContext->R12;
+    pContext->R13 = pPalContext->R13;
+    pContext->R14 = pPalContext->R14;
+    pContext->R15 = pPalContext->R15;
+#elif defined(_AMD64_)
     pContext->Rip = pPalContext->IP;
     pContext->Rsp = pPalContext->Rsp;
     pContext->Rbp = pPalContext->Rbp;
@@ -385,19 +345,27 @@ static bool InWriteBarrierHelper(UIntNative faultingIP)
     return false;
 }
 
-static UIntNative UnwindWriteBarrierToCaller(_CONTEXT * pContext)
+
+
+static UIntNative UnwindWriteBarrierToCaller(
+#ifdef PLATFORM_UNIX
+    PAL_LIMITED_CONTEXT * pContext
+#else
+    _CONTEXT * pContext
+#endif
+    )
 {
 #if defined(_DEBUG)
-    UIntNative faultingIP = pContext->GetIP();
+    UIntNative faultingIP = pContext->GetIp();
     ASSERT(InWriteBarrierHelper(faultingIP));
 #endif
 #if defined(_AMD64_) || defined(_X86_)
     // simulate a ret instruction
-    UIntNative sp = pContext->GetSP();      // get the stack pointer
+    UIntNative sp = pContext->GetSp();      // get the stack pointer
     UIntNative adjustedFaultingIP = *(UIntNative *)sp - 5;   // call instruction will be 6 bytes - act as if start of call instruction + 1 were the faulting IP
-    pContext->SetSP(sp+sizeof(UIntNative)); // pop the stack
+    pContext->SetSp(sp+sizeof(UIntNative)); // pop the stack
 #elif defined(_ARM_)
-    UIntNative adjustedFaultingIP = pContext->GetLR() - 2;   // bl instruction will be 4 bytes - act as if start of call instruction + 2 were the faulting IP
+    UIntNative adjustedFaultingIP = pContext->GetLr() - 2;   // bl instruction will be 4 bytes - act as if start of call instruction + 2 were the faulting IP
 #elif defined(_ARM64_)
     PORTABILITY_ASSERT("@TODO: FIXME:ARM64");
     UIntNative adjustedFaultingIP = -1;
@@ -407,9 +375,49 @@ static UIntNative UnwindWriteBarrierToCaller(_CONTEXT * pContext)
     return adjustedFaultingIP;
 }
 
+#ifdef PLATFORM_UNIX
+
+Int32 __stdcall RhpHardwareExceptionHandler(UIntNative faultCode, UIntNative faultAddress, PAL_LIMITED_CONTEXT* palContext, UIntNative* arg0Reg, UIntNative* arg1Reg)
+{
+    UIntNative faultingIP = palContext->GetIp();
+
+    ICodeManager * pCodeManager = GetRuntimeInstance()->FindCodeManagerByAddress((PTR_VOID)faultingIP);
+    if ((pCodeManager != NULL) || (faultCode == STATUS_ACCESS_VIOLATION && InWriteBarrierHelper(faultingIP)))
+    {
+        if (faultCode == STATUS_ACCESS_VIOLATION)
+        {
+            if (faultAddress < NULL_AREA_SIZE)
+            {
+                faultCode = STATUS_REDHAWK_NULL_REFERENCE;
+            }
+
+            if (pCodeManager == NULL)
+            {
+                // we were AV-ing in a write barrier helper - unwind our way to our caller
+                faultingIP = UnwindWriteBarrierToCaller(palContext);
+            }
+        }
+        else if (faultCode == STATUS_STACK_OVERFLOW)
+        {
+            ASSERT_UNCONDITIONALLY("managed stack overflow");
+            RhFailFast();
+        }
+
+        *arg0Reg = faultCode;
+        *arg1Reg = faultingIP;
+        palContext->SetIp((UIntNative)&RhpThrowHwEx);
+
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+#else // PLATFORM_UNIX
+
 Int32 __stdcall RhpVectoredExceptionHandler(PEXCEPTION_POINTERS pExPtrs)
 {
-    UIntNative faultingIP = pExPtrs->ContextRecord->GetIP();
+    UIntNative faultingIP = pExPtrs->ContextRecord->GetIp();
 
     ICodeManager * pCodeManager = GetRuntimeInstance()->FindCodeManagerByAddress((PTR_VOID)faultingIP);
     UIntNative faultCode = pExPtrs->ExceptionRecord->ExceptionCode;
@@ -431,13 +439,13 @@ Int32 __stdcall RhpVectoredExceptionHandler(PEXCEPTION_POINTERS pExPtrs)
             RhFailFast2(pExPtrs->ExceptionRecord, pExPtrs->ContextRecord);
         }
 
-        pExPtrs->ContextRecord->SetIP((UIntNative)&RhpThrowHwEx);
+        pExPtrs->ContextRecord->SetIp((UIntNative)&RhpThrowHwEx);
         pExPtrs->ContextRecord->SetArg0Reg(faultCode);
         pExPtrs->ContextRecord->SetArg1Reg(faultingIP);
 
         return EXCEPTION_CONTINUE_EXECUTION;
     }
-    else
+
     {
         static UInt8 *s_pbRuntimeModuleLower = NULL;
         static UInt8 *s_pbRuntimeModuleUpper = NULL;
@@ -466,10 +474,12 @@ Int32 __stdcall RhpVectoredExceptionHandler(PEXCEPTION_POINTERS pExPtrs)
             ASSERT_UNCONDITIONALLY("Hardware exception raised inside the runtime.");
             RhFailFast2(pExPtrs->ExceptionRecord, pExPtrs->ContextRecord);
         }
-
-        return EXCEPTION_CONTINUE_SEARCH;
     }
+
+    return EXCEPTION_CONTINUE_SEARCH;
 }
+
+#endif // PLATFORM_UNIX
 
 COOP_PINVOKE_HELPER(void, RhpFallbackFailFast, ())
 {

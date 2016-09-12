@@ -3,17 +3,14 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
-using System.Text;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 
 using Internal.TypeSystem;
 
 using ILCompiler;
 using ILCompiler.Compiler.CppCodeGen;
 using ILCompiler.CppCodeGen;
-using ILCompiler.SymbolReader;
 
 using ILCompiler.DependencyAnalysis;
 
@@ -21,6 +18,11 @@ namespace Internal.IL
 {
     internal partial class ILImporter
     {
+        /// <summary>
+        /// Stack of values pushed onto the IL stack: locals, arguments, values, function pointer, ...
+        /// </summary>
+        private EvaluationStack<StackEntry> _stack = new EvaluationStack<StackEntry>(0);
+
         private Compilation _compilation;
         private NodeFactory _nodeFactory;
         private CppWriter _writer;
@@ -85,7 +87,7 @@ namespace Internal.IL
             public int StartOffset;
             public int EndOffset;
 
-            public StackValue[] EntryStack;
+            public EvaluationStack<StackEntry> EntryStack;
 
             public bool TryStart;
             public bool FilterStart;
@@ -106,8 +108,6 @@ namespace Internal.IL
             _methodSignature = method.Signature;
 
             _typeSystemContext = method.Context;
-
-            _msvc = (_typeSystemContext.Target.OperatingSystem == TargetOS.Windows);
 
             if (!_methodSignature.IsStatic)
                 _thisType = method.OwningType;
@@ -149,15 +149,14 @@ namespace Internal.IL
                 var localSlotToInfoMap = new Dictionary<int, ILLocalVariable>();
                 foreach (var v in localVariables)
                 {
-                    ILLocalVariable modifiedLocal = v;
-                    modifiedLocal.Name = _compilation.NameMangler.SanitizeName(modifiedLocal.Name);
+                    string sanitizedName = _compilation.NameMangler.SanitizeName(v.Name);
                     if (!names.Add(v.Name))
                     {
-                        modifiedLocal.Name = string.Format("{0}_local{1}", v.Name, v.Slot);
-                        names.Add(modifiedLocal.Name);
+                        sanitizedName = string.Format("{0}_local{1}", v.Name, v.Slot);
+                        names.Add(sanitizedName);
                     }
 
-                    localSlotToInfoMap[v.Slot] = modifiedLocal;
+                    localSlotToInfoMap[v.Slot] = new ILLocalVariable(v.Slot, sanitizedName, v.CompilerGenerated);
                 }
                 _localSlotToInfoMap = localSlotToInfoMap;
             }
@@ -178,25 +177,6 @@ namespace Internal.IL
             }
 
             _parameterIndexToNameMap = parameterIndexToNameMap;
-        }
-
-        private struct Value
-        {
-            public Value(String name)
-            {
-                Name = name;
-                Aux = null;
-            }
-
-            public String Name;
-            public Object Aux;
-        };
-
-        private struct StackValue
-        {
-            public StackValueKind Kind;
-            public TypeDesc Type;
-            public Value Value;
         }
 
         private StackValueKind GetStackValueKind(TypeDesc type)
@@ -229,6 +209,7 @@ namespace Internal.IL
                 case TypeFlags.Class:
                 case TypeFlags.Interface:
                 case TypeFlags.Array:
+                case TypeFlags.SzArray:
                     return StackValueKind.ObjRef;
                 case TypeFlags.ByRef:
                     return StackValueKind.ByRef;
@@ -238,25 +219,6 @@ namespace Internal.IL
                     return StackValueKind.Unknown;
             }
         }
-
-        private void Push(StackValue value)
-        {
-            if (_stackTop >= _stack.Length)
-                Array.Resize(ref _stack, 2 * _stackTop + 3);
-            _stack[_stackTop++] = value;
-        }
-
-        private void Push(StackValueKind kind, Value value, TypeDesc type = null)
-        {
-            Push(new StackValue() { Kind = kind, Type = type, Value = value });
-        }
-
-        private StackValue Pop()
-        {
-            return _stack[--_stackTop];
-        }
-
-        private bool _msvc;
 
         private string GetStackValueKindCPPTypeName(StackValueKind kind, TypeDesc type = null)
         {
@@ -273,38 +235,67 @@ namespace Internal.IL
             }
         }
 
-        private static string IntToString(int x)
-        {
-            return x.ToString(CultureInfo.InvariantCulture);
-        }
-
         private int _currentTemp = 1;
         private string NewTempName()
         {
-            return "_" + IntToString(_currentTemp++);
+            return "_" + (_currentTemp++).ToStringInvariant();
         }
 
+      /// <summary>
+        /// Push an expression named <paramref name="name"/> of kind <paramref name="kind"/>.
+        /// </summary>
+        /// <param name="kind">Kind of entry in stack</param>
+        /// <param name="name">Variable to be pushed</param>
+        /// <param name="type">Type if any of <paramref name="name"/></param>
+        private void PushExpression(StackValueKind kind, string name, TypeDesc type = null)
+        {
+            Debug.Assert(kind != StackValueKind.Unknown, "Unknown stack kind");
+
+            _stack.Push(new ExpressionEntry(kind, name, type));
+        }
+
+        /// <summary>
+        /// Push a new temporary local of kind <paramref name="kind"/> and type <paramref name="type"/> and generate its declaration.
+        /// </summary>
+        /// <param name="kind">Kind of entry in stack</param>
+        /// <param name="type">Type if any for new entry in stack</param>
         private void PushTemp(StackValueKind kind, TypeDesc type = null)
         {
-            string temp = NewTempName();
+            Debug.Assert(kind != StackValueKind.Unknown, "Unknown stack kind");
 
-            Push(kind, new Value(temp), type);
+            PushTemp(new ExpressionEntry(kind, NewTempName(), type));
+        }
+
+        /// <summary>
+        /// Push a new entry onto evaluation stack and declare a temporary local to hold its representation.
+        /// </summary>
+        /// <param name="entry">Entry to push onto evaluation stack.</param>
+        private void PushTemp(StackEntry entry)
+        {
+            _stack.Push(entry);
 
             // Start declaration on a new line
             AppendLine();
-            Append(GetStackValueKindCPPTypeName(kind, type));
+            Append(GetStackValueKindCPPTypeName(entry.Kind, entry.Type));
             Append(" ");
-            Append(temp);
+            Append(entry);
             Append(" = ");
         }
 
-        private void AppendCastIfNecessary(TypeDesc destType, StackValueKind srcType)
+        /// <summary>
+        /// Generate a cast in case the stack type of source is not identical or compatible with destination type.
+        /// </summary>
+        /// <param name="destType">Type of destination</param>
+        /// <param name="srcEntry">Source entry from stack</param>
+        private void AppendCastIfNecessary(TypeDesc destType, StackEntry srcEntry)
         {
-            if (destType.IsValueType)
-                return;
-            Append("(");
-            Append(_writer.GetCppSignatureTypeName(destType));
-            Append(")");
+            ConstantEntry constant = srcEntry as ConstantEntry;
+            if ((constant != null) && (constant.IsCastNecessary(destType)) || !destType.IsValueType)
+            {
+                Append("(");
+                Append(_writer.GetCppSignatureTypeName(destType));
+                Append(")");
+            }
         }
 
         private void AppendCastIfNecessary(StackValueKind dstType, TypeDesc srcType)
@@ -322,19 +313,19 @@ namespace Internal.IL
             }
         }
 
-        private Value NewSpillSlot(StackValueKind kind, TypeDesc type)
+        private StackEntry NewSpillSlot(StackEntry entry)
         {
             if (_spillSlots == null)
                 _spillSlots = new List<SpillSlot>();
 
             SpillSlot spillSlot = new SpillSlot();
-            spillSlot.Kind = kind;
-            spillSlot.Type = type;
-            spillSlot.Name = "_s" + IntToString(_spillSlots.Count);
+            spillSlot.Kind = entry.Kind;
+            spillSlot.Type = entry.Type;
+            spillSlot.Name = "_s" + _spillSlots.Count.ToStringInvariant();
 
             _spillSlots.Add(spillSlot);
 
-            return new Value() { Name = spillSlot.Name };
+            return new ExpressionEntry(entry.Kind, spillSlot.Name, entry.Type);
         }
 
         /// <summary>
@@ -379,6 +370,15 @@ namespace Internal.IL
         }
 
         /// <summary>
+        /// Append string representation of <paramref name="value"/> to <see cref="_builder"/>.
+        /// </summary>
+        /// <param name="value">Value to print.</param>
+        private void Append(StackEntry value)
+        {
+            value.Append(_builder);
+        }
+
+        /// <summary>
         /// Append a semicolon to <see cref="_builder"/>.
         /// </summary>
         private void AppendSemicolon()
@@ -414,7 +414,7 @@ namespace Internal.IL
                 return _writer.SanitizeCppVarName(_parameterIndexToNameMap[index]);
             }
 
-            return (argument ? "_a" : "_l") + IntToString(index);
+            return (argument ? "_a" : "_l") + index.ToStringInvariant();
         }
 
         private TypeDesc GetVarType(int index, bool argument)
@@ -462,7 +462,7 @@ namespace Internal.IL
 
             ForceAppendEmptyLine();
             Append("#line ");
-            Append(IntToString(sequencePoint.LineNumber));
+            Append(sequencePoint.LineNumber.ToStringInvariant());
             Append(" \"");
             Append(sequencePoint.Document.Replace("\\", "\\\\"));
             Append("\"");
@@ -486,7 +486,7 @@ namespace Internal.IL
 
                 ForceAppendEmptyLine();
                 Append("#line ");
-                Append(IntToString(sequencePoint.LineNumber));
+                Append(sequencePoint.LineNumber.ToStringInvariant());
                 Append(" \"");
                 Append(sequencePoint.Document.Replace("\\", "\\\\"));
                 Append("\"");
@@ -498,7 +498,7 @@ namespace Internal.IL
             Append("{");
             Indent();
 
-            bool initLocals = _methodIL.GetInitLocals();
+            bool initLocals = _methodIL.IsInitLocals;
             for (int i = 0; i < _locals.Length; i++)
             {
                 AppendLine();
@@ -546,7 +546,7 @@ namespace Internal.IL
                 {
                     AppendLine();
                     Append("int __finallyReturn");
-                    Append(IntToString(i));
+                    Append(i.ToStringInvariant());
                     Append(" = 0");
                     AppendSemicolon();
                 }
@@ -563,7 +563,7 @@ namespace Internal.IL
                     AppendEmptyLine();
                     AppendLine();
                     Append("_bb");
-                    Append(IntToString(i));
+                    Append(i.ToStringInvariant());
                     Append(": {");
                     ForceAppendEmptyLine();
                     Append(basicBlock.Code);
@@ -579,19 +579,19 @@ namespace Internal.IL
                 {
                     AppendEmptyLine();
                     AppendLine();
-                    Append("__endFinally" + IntToString(i) + ":");
+                    Append("__endFinally" + i.ToStringInvariant() + ":");
                     Indent();
                     AppendLine();
-                    Append("switch(__finallyReturn" + IntToString(i) + ") {");
+                    Append("switch(__finallyReturn" + i.ToStringInvariant() + ") {");
                     Indent();
                     for (int j = 1; j <= r.ReturnLabels; j++)
                     {
                         AppendLine();
-                        Append("case " + IntToString(j) + ": goto __returnFromFinally" + IntToString(i) +
-                                            "_" + IntToString(j) + ";");
+                        Append("case " + j.ToStringInvariant() + ": goto __returnFromFinally" + i.ToStringInvariant() +
+                                            "_" + j.ToStringInvariant() + ";");
                     }
                     AppendLine();
-                    Append("default: " + (_msvc ? "__assume(0)" : "__builtin_unreachable()") + ";");
+                    Append("default: CORERT_UNREACHABLE;");
                     Exdent();
                     AppendLine();
                     Append("}");
@@ -607,6 +607,18 @@ namespace Internal.IL
 
         private void StartImportingBasicBlock(BasicBlock basicBlock)
         {
+            _stack.Clear();
+
+            EvaluationStack<StackEntry> entryStack = basicBlock.EntryStack;
+            if (entryStack != null)
+            {
+                int n = entryStack.Length;
+                for (int i = 0; i < n; i++)
+                {
+                    _stack.Push(entryStack[i].Duplicate());
+                }
+            }
+
             Indent();
         }
 
@@ -629,7 +641,6 @@ namespace Internal.IL
         private void ImportLoadVar(int index, bool argument)
         {
             string name = GetVarName(index, argument);
-            string temp = NewTempName();
 
             TypeDesc type = GetVarType(index, argument);
             StackValueKind kind = GetStackValueKind(type);
@@ -642,7 +653,7 @@ namespace Internal.IL
 
         private void ImportStoreVar(int index, bool argument)
         {
-            var value = Pop();
+            var value = _stack.Pop();
 
             string name = GetVarName(index, argument);
 
@@ -650,8 +661,8 @@ namespace Internal.IL
             Append(name);
             Append(" = ");
             TypeDesc type = GetVarType(index, argument);
-            AppendCastIfNecessary(type, value.Kind);
-            Append(value.Value.Name);
+            AppendCastIfNecessary(type, value);
+            Append(value);
             AppendSemicolon();
         }
 
@@ -672,12 +683,12 @@ namespace Internal.IL
 
         private void ImportDup()
         {
-            Push(_stack[_stackTop - 1]);
+            _stack.Push(_stack.Peek().Duplicate());
         }
 
         private void ImportPop()
         {
-            Pop();
+            _stack.Pop();
         }
 
         private void ImportJmp(int token)
@@ -689,14 +700,14 @@ namespace Internal.IL
         {
             TypeDesc type = (TypeDesc)_methodIL.GetObject(token);
 
-            var value = Pop();
+            var value = _stack.Pop();
             PushTemp(StackValueKind.ObjRef, type);
 
             AddTypeReference(type, false);
 
             Append(opcode == ILOpcode.isinst ? "__isinst" : "__castclass");
             Append("(");
-            Append(value.Value.Name);
+            Append(value);
             Append(", ");
             Append(_writer.GetCppTypeName(type));
             Append("::__getMethodTable())");
@@ -720,11 +731,13 @@ namespace Internal.IL
                 case "InitializeArray":
                     if (IsTypeName(method, "System.Runtime.CompilerServices", "RuntimeHelpers"))
                     {
-                        var fieldSlot = Pop();
-                        var arraySlot = Pop();
+                        var fieldSlot = (LdTokenEntry<FieldDesc>) _stack.Pop();
+                        var arraySlot = _stack.Pop();
 
-                        var fieldDesc = (TypeSystem.Ecma.EcmaField)fieldSlot.Value.Aux;
-                        var memBlock = TypeSystem.Ecma.EcmaFieldExtensions.GetFieldRvaData(fieldDesc);
+                        var fieldDesc = fieldSlot.LdToken;
+                        var dataBlob = _compilation.GetFieldRvaData(fieldDesc).GetData(_compilation.NodeFactory, false);
+                        Debug.Assert(dataBlob.Relocs.Length == 0);
+                        var memBlock = dataBlob.Data;
 
                         // TODO: Need to do more for arches with different endianness?
                         var preinitDataHolder = NewTempName();
@@ -747,7 +760,8 @@ namespace Internal.IL
                                 if ((i % 16) == 0)
                                     AppendLine();
                             }
-                            Append(String.Format(CultureInfo.InvariantCulture, "0x{0:X}", memBlock[i]));
+                            Append("0x");
+                            Append(memBlock[i].ToStringInvariant("x2"));
                         }
                         if (memBlock.Length > 16)
                         {
@@ -759,14 +773,23 @@ namespace Internal.IL
 
                         AppendLine();
                         Append("memcpy((char*)");
-                        Append(arraySlot.Value.Name);
+                        Append(arraySlot);
                         Append(" + ARRAY_BASE, ");
                         Append(preinitDataHolder);
                         Append(", ");
-                        Append(IntToString(memBlock.Length));
+                        Append(memBlock.Length.ToStringInvariant());
                         Append(")");
 
                         AppendSemicolon();
+                        return true;
+                    }
+                    break;
+                case "GetValueInternal":
+                    if (IsTypeName(method, "System", "RuntimeTypeHandle"))
+                    {
+                        var typeHandleSlot = (LdTokenEntry<TypeDesc>) _stack.Pop();
+                        TypeDesc typeOfEEType = typeHandleSlot.LdToken;
+                        PushExpression(StackValueKind.NativeInt, string.Concat("((intptr_t)", _writer.GetCppTypeName(typeOfEEType), "::__getMethodTable())"));
                         return true;
                     }
                     break;
@@ -776,12 +799,46 @@ namespace Internal.IL
             return false;
         }
 
+        private void ImportNewObjArray(TypeDesc owningType, MethodDesc method)
+        {
+            AppendLine();
+
+            string dimensionsTemp = NewTempName();
+            Append("int32_t " + dimensionsTemp + "[] = { ");
+            int argumentsCount = method.Signature.Length;
+            for (int i = 0; i < argumentsCount; i++)
+            {
+                Append("(int32_t)(");
+                Append(_stack[_stack.Top - argumentsCount + i]);
+                Append("),");
+            }
+            _stack.PopN(argumentsCount);
+
+            Append("};");
+
+            PushTemp(StackValueKind.ObjRef, owningType);
+
+            AddTypeReference(owningType, true);
+
+            MethodDesc helper = _typeSystemContext.GetHelperEntryPoint("ArrayHelpers", "NewObjArray");
+            AddMethodReference(helper);
+
+            Append(_writer.GetCppTypeName(helper.OwningType) + "::" + _writer.GetCppMethodName(helper));
+            Append("((intptr_t)");
+            Append(_writer.GetCppTypeName(method.OwningType));
+            Append("::__getMethodTable(),");
+            Append(argumentsCount.ToStringInvariant());
+            Append(",");
+            Append(dimensionsTemp);
+            Append(")");
+            AppendSemicolon();
+       }
+
         private void ImportCall(ILOpcode opcode, int token)
         {
             bool callViaSlot = false;
             bool delegateInvoke = false;
-            DelegateInfo delegateInfo = null;
-            bool mdArrayCreate = false;
+            DelegateCreationInfo delegateInfo = null;
 
             MethodDesc method = (MethodDesc)_methodIL.GetObject(token);
 
@@ -799,8 +856,13 @@ namespace Internal.IL
                     _pendingPrefix &= ~Prefix.Constrained;
                     constrained = _constrained;
 
-                    // TODO:
-                    throw new NotImplementedException();
+                    bool forceUseRuntimeLookup;
+                    MethodDesc directMethod = constrained.GetClosestMetadataType().TryResolveConstraintMethodApprox(method.OwningType, method, out forceUseRuntimeLookup);
+                    if (directMethod == null || forceUseRuntimeLookup)
+                        throw new NotImplementedException();
+
+                    method = directMethod;
+                    opcode = ILOpcode.call;
                 }
             }
 
@@ -822,22 +884,17 @@ namespace Internal.IL
 
                         // WORKAROUND: the static method expects an extra arg
                         // Annoyingly, it needs to be before all the others
-                        if (_stackTop >= _stack.Length)
-                            Array.Resize(ref _stack, 2 * _stackTop + 3);
-                        for (int i = _stackTop - 1; i > _stackTop - method.Signature.Length; i--)
-                            _stack[i + 1] = _stack[i];
-                        _stackTop++;
-                        _stack[_stackTop - method.Signature.Length] =
-                            new StackValue { Kind = StackValueKind.ObjRef, Value = new Value("0") };
+                        _stack.InsertAt(new ExpressionEntry(StackValueKind.ObjRef, "0"), _stack.Top - method.Signature.Length + 1);
                     }
                     else if (owningType.IsArray)
                     {
-                        mdArrayCreate = true;
+                        ImportNewObjArray(owningType, method);
+                        return;
                     }
                     else if (owningType.IsDelegate)
                     {
-                        delegateInfo = _compilation.GetDelegateCtor((MethodDesc)_stack[_stackTop - 1].Value.Aux);
-                        method = delegateInfo.Ctor;
+                        delegateInfo = _compilation.GetDelegateCtor(owningType, ((LdTokenEntry<MethodDesc>)_stack.Peek()).LdToken);
+                        method = delegateInfo.Constructor.Method;
                     }
                 }
                 else
@@ -871,7 +928,7 @@ namespace Internal.IL
                 }
             }
 
-            if (!callViaSlot && !delegateInvoke && !mdArrayCreate)
+            if (!callViaSlot && !delegateInvoke)
                 AddMethodReference(method);
 
             if (opcode == ILOpcode.newobj)
@@ -915,7 +972,7 @@ namespace Internal.IL
                 needNewLine = true;
             }
 
-            if (opcode == ILOpcode.newobj && !mdArrayCreate)
+            if (opcode == ILOpcode.newobj)
             {
                 if (!retType.IsValueType)
                 {
@@ -928,20 +985,22 @@ namespace Internal.IL
                     AppendSemicolon();
                     needNewLine = true;
 
-                    if (delegateInfo != null && delegateInfo.ShuffleThunk != null)
+                    if (delegateInfo != null && delegateInfo.Thunk != null)
                     {
-                        AddMethodReference(delegateInfo.ShuffleThunk);
+                        MethodDesc thunkMethod = delegateInfo.Thunk.Method;
+                        AddMethodReference(thunkMethod);
 
-                        _stack[_stackTop - 2].Value.Name = temp;
+                        // Update stack with new name.
+                        ((ExpressionEntry) _stack[_stack.Top - 2]).Name = temp;
 
                         var sb = new CppGenerationBuffer();
                         AppendLine();
                         sb.Append("(intptr_t)&");
-                        sb.Append(_writer.GetCppTypeName(delegateInfo.ShuffleThunk.OwningType));
+                        sb.Append(_writer.GetCppTypeName(thunkMethod.OwningType));
                         sb.Append("::");
-                        sb.Append(_writer.GetCppMethodName(delegateInfo.ShuffleThunk));
+                        sb.Append(_writer.GetCppMethodName(thunkMethod));
 
-                        Push(StackValueKind.NativeInt, new Value(sb.ToString()), null);
+                        PushExpression(StackValueKind.NativeInt, sb.ToString());
                     }
                 }
             }
@@ -951,25 +1010,24 @@ namespace Internal.IL
 
             if (callViaSlot || delegateInvoke)
             {
+                // While waiting for C# return by ref, get this reference and insert it back
+                // if it is a delegate invoke.
+                ExpressionEntry v = (ExpressionEntry) _stack[_stack.Top - (methodSignature.Length + 1)];
                 Append("(*");
                 Append(_writer.GetCppTypeName(method.OwningType));
                 Append("::");
                 Append(delegateInvoke ? "__invoke__" : "__getslot__");
                 Append(_writer.GetCppMethodName(method));
                 Append("(");
-                Append(_stack[_stackTop - (methodSignature.Length + 1)].Value.Name);
+                Append(v);
                 Append("))");
 
                 if (delegateInvoke)
                 {
-                    _stack[_stackTop - (methodSignature.Length + 1)].Value.Name =
+                    v.Name =
                         "((" + _writer.GetCppSignatureTypeName(GetWellKnownType(WellKnownType.MulticastDelegate)) + ")" +
-                            _stack[_stackTop - (methodSignature.Length + 1)].Value.Name + ")->m_firstParameter";
+                            v.Name + ")->m_firstParameter";
                 }
-            }
-            else if (mdArrayCreate)
-            {
-                Append("RhNewMDArray");
             }
             else
             {
@@ -980,14 +1038,7 @@ namespace Internal.IL
 
             TypeDesc thisArgument = null;
             Append("(");
-            if (mdArrayCreate)
-            {
-                Append(_writer.GetCppTypeName(method.OwningType));
-                Append("::__getMethodTable(), ");
-                Append(IntToString(((ArrayType)method.OwningType).Rank));
-                Append(", ");
-            }
-            else if (opcode == ILOpcode.newobj)
+            if (opcode == ILOpcode.newobj)
             {
                 Append("(");
                 if (retType.IsValueType)
@@ -1018,7 +1069,10 @@ namespace Internal.IL
             Append(")");
 
             if (temp != null)
-                Push(retKind, new Value(temp), retType);
+            {
+                Debug.Assert(retKind != StackValueKind.Unknown, "Valid return type");
+                PushExpression(retKind, temp, retType);
+            }
             AppendSemicolon();
         }
 
@@ -1026,9 +1080,10 @@ namespace Internal.IL
         {
             int signatureLength = methodSignature.Length;
             int argumentsCount = (thisArgument != null) ? (signatureLength + 1) : signatureLength;
+            int startingIndex = _stack.Top - argumentsCount;
             for (int i = 0; i < argumentsCount; i++)
             {
-                var op = _stack[_stackTop - argumentsCount + i];
+                var op = _stack[startingIndex + i];
                 int argIndex = signatureLength - (argumentsCount - i);
                 TypeDesc argType;
                 if (argIndex == -1)
@@ -1039,12 +1094,12 @@ namespace Internal.IL
                 {
                     argType = methodSignature[argIndex];
                 }
-                AppendCastIfNecessary(argType, op.Kind);
-                Append(op.Value.Name);
+                AppendCastIfNecessary(argType, op);
+                Append(op);
                 if (i + 1 != argumentsCount)
                     Append(", ");
             }
-            _stackTop -= argumentsCount;
+            _stack.PopN(argumentsCount);
         }
 
         private void ImportCalli(int token)
@@ -1059,7 +1114,7 @@ namespace Internal.IL
                     thisArgument = thisArgument.MakeByRefType();
             }
 
-            string typeDefName = "__calli__" + token.ToString("x8", CultureInfo.InvariantCulture);
+            string typeDefName = "__calli__" + token.ToStringInvariant("x8");
             _writer.AppendSignatureTypeDef(_builder, typeDefName, methodSignature, thisArgument);
 
             TypeDesc retType = methodSignature.ReturnType;
@@ -1088,17 +1143,20 @@ namespace Internal.IL
                 AppendLine();
             }
 
-            var fnPtrValue = Pop();
+            var fnPtrValue = _stack.Pop();
             Append("((");
             Append(typeDefName);
             Append(")");
-            Append(fnPtrValue.Value.Name);
+            Append(fnPtrValue);
             Append(")(");
             PassCallArguments(methodSignature, thisArgument);
             Append(")");
 
             if (temp != null)
-                Push(retKind, new Value(temp), retType);
+            {
+                Debug.Assert(retKind != StackValueKind.Unknown, "Valid return type");
+                PushExpression(retKind, temp, retType);
+            }
 
             AppendSemicolon();
         }
@@ -1115,48 +1173,37 @@ namespace Internal.IL
 
             AddMethodReference(method);
 
-            PushTemp(StackValueKind.NativeInt);
+            var entry = new LdTokenEntry<MethodDesc>(StackValueKind.NativeInt, NewTempName(), method);
+            PushTemp(entry);
             Append("(intptr_t)&");
             Append(_writer.GetCppTypeName(method.OwningType));
             Append("::");
             Append(_writer.GetCppMethodName(method));
-
-            _stack[_stackTop - 1].Value.Aux = method;
 
             AppendSemicolon();
         }
 
         private void ImportLoadInt(long value, StackValueKind kind)
         {
-            string val;
             if (kind == StackValueKind.Int64)
             {
-                if (value == Int64.MinValue)
-                    val = "(int64_t)(0x8000000000000000" + (_msvc ? "i64" : "LL") + ")";
-                else
-                    val = value.ToString(CultureInfo.InvariantCulture) + (_msvc ? "i64" : "LL");
+                _stack.Push(new Int64ConstantEntry(value));
             }
             else
             {
-                if (value == Int32.MinValue)
-                    val = "(int32_t)(0x80000000)";
-                else
-                    val = ((int)value).ToString(CultureInfo.InvariantCulture);
+                Debug.Assert(value >= Int32.MinValue && value <= Int32.MaxValue, "Value too large for an Int32.");
+                _stack.Push(new Int32ConstantEntry(checked((int) value)));
             }
-
-            Push(kind, new Value(val));
         }
 
         private void ImportLoadFloat(double value)
         {
-            // TODO: Handle infinity, NaN, etc.
-            string val = value.ToString();
-            Push(StackValueKind.Float, new Value(val));
+            _stack.Push(new FloatConstantEntry(value));
         }
 
         private void ImportLoadNull()
         {
-            Push(StackValueKind.ObjRef, new Value("0"));
+            PushExpression(StackValueKind.ObjRef, "0");
         }
 
         private void ImportReturn()
@@ -1169,21 +1216,21 @@ namespace Internal.IL
             }
             else
             {
-                var value = Pop();
+                var value = _stack.Pop();
                 Append("return ");
-                AppendCastIfNecessary(returnType, value.Kind);
-                Append(value.Value.Name);
+                AppendCastIfNecessary(returnType, value);
+                Append(value);
             }
             AppendSemicolon();
         }
 
         private void ImportFallthrough(BasicBlock next)
         {
-            StackValue[] entryStack = next.EntryStack;
+            EvaluationStack<StackEntry> entryStack = next.EntryStack;
 
             if (entryStack != null)
             {
-                if (entryStack.Length != _stackTop)
+                if (entryStack.Length != _stack.Length)
                     throw new InvalidProgramException();
 
                 for (int i = 0; i < entryStack.Length; i++)
@@ -1201,25 +1248,28 @@ namespace Internal.IL
             }
             else
             {
-                entryStack = (_stackTop != 0) ? new StackValue[_stackTop] : s_emptyStack;
-
-                for (int i = 0; i < entryStack.Length; i++)
+                if (_stack.Length > 0)
                 {
-                    StackValue spilledValue = _stack[i];
-                    spilledValue.Value = NewSpillSlot(spilledValue.Kind, spilledValue.Type);
-                    entryStack[i] = spilledValue;
-                }
+                    entryStack = new EvaluationStack<StackEntry>(_stack.Length);
 
+                    for (int i = 0; i < _stack.Length; i++)
+                    {
+                        entryStack.Push(NewSpillSlot(_stack[i]));
+                    }
+                }
                 next.EntryStack = entryStack;
             }
 
-            for (int i = 0; i < entryStack.Length; i++)
+            if (entryStack != null)
             {
-                AppendLine();
-                Append(entryStack[i].Value.Name);
-                Append(" = ");
-                Append(_stack[i].Value.Name);
-                AppendSemicolon();
+                for (int i = 0; i < entryStack.Length; i++)
+                {
+                    AppendLine();
+                    Append(entryStack[i]);
+                    Append(" = ");
+                    Append(_stack[i]);
+                    AppendSemicolon();
+                }
             }
 
             MarkBasicBlock(next);
@@ -1227,11 +1277,11 @@ namespace Internal.IL
 
         private void ImportSwitchJump(int jmpBase, int[] jmpDelta, BasicBlock fallthrough)
         {
-            var op = Pop();
+            var op = _stack.Pop();
 
             AppendLine();
             Append("switch (");
-            Append(op.Value.Name);
+            Append(op);
             Append(") {");
             Indent();
 
@@ -1245,7 +1295,7 @@ namespace Internal.IL
                 ImportFallthrough(target);
                 AppendLine();
                 Append("goto _bb");
-                Append(IntToString(target.StartOffset));
+                Append(target.StartOffset.ToStringInvariant());
                 AppendSemicolon();
                 AppendLine();
                 Append("break; ");
@@ -1267,14 +1317,14 @@ namespace Internal.IL
                 Append("if (");
                 if (opcode == ILOpcode.brfalse || opcode == ILOpcode.brtrue)
                 {
-                    var op = Pop();
-                    Append(op.Value.Name);
+                    var op = _stack.Pop();
+                    Append(op);
                     Append((opcode == ILOpcode.brtrue) ? " != 0" : " == 0");
                 }
                 else
                 {
-                    var op1 = Pop();
-                    var op2 = Pop();
+                    var op1 = _stack.Pop();
+                    var op2 = _stack.Pop();
 
                     // StackValueKind is carefully ordered to make this work (assuming the IL is valid)
                     StackValueKind kind;
@@ -1362,7 +1412,7 @@ namespace Internal.IL
                         Append(GetStackValueKindCPPTypeName(kind));
                         Append(")");
                     }
-                    Append(op2.Value.Name);
+                    Append(op2);
                     Append(" ");
                     Append(op);
                     Append(" ");
@@ -1372,7 +1422,7 @@ namespace Internal.IL
                         Append(GetStackValueKindCPPTypeName(kind));
                         Append(")");
                     }
-                    Append(op1.Value.Name);
+                    Append(op1);
                     if (inverted)
                     {
                         Append(")");
@@ -1385,7 +1435,7 @@ namespace Internal.IL
             ImportFallthrough(target);
             AppendLine();
             Append("goto _bb");
-            Append(IntToString(target.StartOffset));
+            Append(target.StartOffset.ToStringInvariant());
             AppendSemicolon();
             Exdent();
             AppendLine();
@@ -1397,8 +1447,8 @@ namespace Internal.IL
 
         private void ImportBinaryOperation(ILOpcode opcode)
         {
-            var op1 = Pop();
-            var op2 = Pop();
+            var op1 = _stack.Pop();
+            var op2 = _stack.Pop();
 
             // StackValueKind is carefully ordered to make this work (assuming the IL is valid)
             StackValueKind kind;
@@ -1457,7 +1507,7 @@ namespace Internal.IL
                 Append(GetStackValueKindCPPTypeName(kind));
                 Append(")");
             }
-            Append(op2.Value.Name);
+            Append(op2);
             Append(" ");
             Append(op);
             Append(" ");
@@ -1467,15 +1517,15 @@ namespace Internal.IL
                 Append(GetStackValueKindCPPTypeName(kind));
                 Append(")");
             }
-            Append(op1.Value.Name);
+            Append(op1);
 
             AppendSemicolon();
         }
 
         private void ImportShiftOperation(ILOpcode opcode)
         {
-            var shiftAmount = Pop();
-            var op = Pop();
+            var shiftAmount = _stack.Pop();
+            var op = _stack.Pop();
 
             PushTemp(op.Kind, op.Type);
 
@@ -1485,18 +1535,18 @@ namespace Internal.IL
                 Append(GetStackValueKindCPPTypeName(op.Kind));
                 Append(")");
             }
-            Append(op.Value.Name);
+            Append(op);
 
             Append((opcode == ILOpcode.shl) ? " << " : " >> ");
 
-            Append(shiftAmount.Value.Name);
+            Append(shiftAmount);
             AppendSemicolon();
         }
 
         private void ImportCompareOperation(ILOpcode opcode)
         {
-            var op1 = Pop();
-            var op2 = Pop();
+            var op1 = _stack.Pop();
+            var op2 = _stack.Pop();
 
             // StackValueKind is carefully ordered to make this work (assuming the IL is valid)
             StackValueKind kind;
@@ -1559,7 +1609,7 @@ namespace Internal.IL
                 Append(GetStackValueKindCPPTypeName(kind));
                 Append(")");
             }
-            Append(op2.Value.Name);
+            Append(op2);
             Append(" ");
             Append(op);
             Append(" ");
@@ -1569,7 +1619,7 @@ namespace Internal.IL
                 Append(GetStackValueKindCPPTypeName(kind));
                 Append(")");
             }
-            Append(op1.Value.Name);
+            Append(op1);
             if (inverted)
             {
                 Append(")");
@@ -1579,7 +1629,7 @@ namespace Internal.IL
 
         private void ImportConvert(WellKnownType wellKnownType, bool checkOverflow, bool unsigned)
         {
-            var op = Pop();
+            var op = _stack.Pop();
 
             TypeDesc type = GetWellKnownType(wellKnownType);
 
@@ -1587,7 +1637,7 @@ namespace Internal.IL
             Append("(");
             Append(_writer.GetCppSignatureTypeName(type));
             Append(")");
-            Append(op.Value.Name);
+            Append(op);
             AppendSemicolon();
         }
 
@@ -1597,7 +1647,7 @@ namespace Internal.IL
 
             AddFieldReference(field);
 
-            var thisPtr = isStatic ? new StackValue() : Pop();
+            var thisPtr = isStatic ? InvalidEntry.Entry : _stack.Pop();
 
             TypeDesc owningType = field.OwningType;
             TypeDesc fieldType = field.FieldType;
@@ -1624,7 +1674,7 @@ namespace Internal.IL
             else
             if (thisPtr.Kind == StackValueKind.ValueType)
             {
-                Append(thisPtr.Value.Name);
+                Append(thisPtr);
                 Append(".");
                 Append(_writer.GetCppFieldName(field));
             }
@@ -1633,7 +1683,7 @@ namespace Internal.IL
                 Append("((");
                 Append(_writer.GetCppTypeName(owningType));
                 Append("*)");
-                Append(thisPtr.Value.Name);
+                Append(thisPtr);
                 Append(")->");
                 Append(_writer.GetCppFieldName(field));
 
@@ -1650,7 +1700,7 @@ namespace Internal.IL
 
             AddFieldReference(field);
 
-            var thisPtr = isStatic ? new StackValue() : Pop();
+            var thisPtr = isStatic ? InvalidEntry.Entry: _stack.Pop();
 
             TypeDesc owningType = field.OwningType;
             TypeDesc fieldType = field.FieldType;
@@ -1687,7 +1737,7 @@ namespace Internal.IL
                 Append("((");
                 Append(_writer.GetCppTypeName(owningType));
                 Append("*)");
-                Append(thisPtr.Value.Name);
+                Append(thisPtr);
                 Append(")->");
                 Append(_writer.GetCppFieldName(field));
 
@@ -1705,8 +1755,8 @@ namespace Internal.IL
 
             AddFieldReference(field);
 
-            var value = Pop();
-            var thisPtr = isStatic ? new StackValue() : Pop();
+            var value = _stack.Pop();
+            var thisPtr = isStatic ? InvalidEntry.Entry : _stack.Pop();
 
             TypeDesc owningType = field.OwningType;
             TypeDesc fieldType = field.FieldType;
@@ -1738,7 +1788,7 @@ namespace Internal.IL
                 Append("((");
                 Append(_writer.GetCppTypeName(owningType));
                 Append("*)");
-                Append(thisPtr.Value.Name);
+                Append(thisPtr);
                 Append(")->");
                 Append(_writer.GetCppFieldName(field));
 
@@ -1752,7 +1802,7 @@ namespace Internal.IL
                 Append(_writer.GetCppSignatureTypeName(fieldType));
                 Append(")");
             }
-            Append(value.Value.Name);
+            Append(value);
             AppendSemicolon();
         }
 
@@ -1766,14 +1816,14 @@ namespace Internal.IL
             if (type == null)
                 type = GetWellKnownType(WellKnownType.Object);
 
-            var addr = Pop();
+            var addr = _stack.Pop();
 
             PushTemp(GetStackValueKind(type), type);
 
             Append("*(");
             Append(_writer.GetCppSignatureTypeName(type));
             Append("*)");
-            Append(addr.Value.Name);
+            Append(addr);
 
             AppendSemicolon();
         }
@@ -1788,8 +1838,8 @@ namespace Internal.IL
             if (type == null)
                 type = GetWellKnownType(WellKnownType.Object);
 
-            var value = Pop();
-            var addr = Pop();
+            var value = _stack.Pop();
+            var addr = _stack.Pop();
 
             // TODO: Write barrier as necessary!!!
 
@@ -1797,20 +1847,20 @@ namespace Internal.IL
             Append("*(");
             Append(_writer.GetCppSignatureTypeName(type));
             Append("*)");
-            Append(addr.Value.Name);
+            Append(addr);
             Append(" = ");
-            AppendCastIfNecessary(type, value.Kind);
-            Append(value.Value.Name);
+            AppendCastIfNecessary(type, value);
+            Append(value);
             AppendSemicolon();
         }
 
         private void ImportThrow()
         {
-            var obj = Pop();
+            var obj = _stack.Pop();
 
             AppendLine();
             Append("__throw_exception(");
-            Append(obj.Value.Name);
+            Append(obj);
             Append(")");
             AppendSemicolon();
         }
@@ -1855,10 +1905,10 @@ namespace Internal.IL
         {
             TypeDesc type = (TypeDesc)_methodIL.GetObject(token);
 
-            var addr = Pop();
+            var addr = _stack.Pop();
             AppendLine();
             Append("memset((void*)");
-            Append(addr.Value.Name);
+            Append(addr);
             Append(",0,sizeof(");
             Append(_writer.GetCppSignatureTypeName(type));
             Append("))");
@@ -1874,7 +1924,7 @@ namespace Internal.IL
                 if (type.IsNullable)
                     throw new NotImplementedException();
 
-                var value = Pop();
+                var value = _stack.Pop();
 
                 PushTemp(StackValueKind.ObjRef, type);
 
@@ -1889,7 +1939,10 @@ namespace Internal.IL
 
                 // TODO: Write barrier as necessary
                 AppendLine();
-                Append("*(" + typeName + " *)((void **)" + _stack[_stackTop - 1].Value.Name + "+1) = " + value.Value.Name);
+                Append("*(" + typeName + " *)((void **)");
+                Append(_stack.Peek());
+                Append(" + 1) = ");
+                Append(value);
                 AppendSemicolon();
             }
         }
@@ -1902,13 +1955,13 @@ namespace Internal.IL
         private static string AddReturnLabel(ExceptionRegion r)
         {
             r.ReturnLabels++;
-            return IntToString(r.ReturnLabels);
+            return r.ReturnLabels.ToStringInvariant();
         }
 
         private void ImportLeave(BasicBlock target)
         {
             // Empty the stack
-            _stackTop = 0;
+            _stack.Clear();
 
             // Close the scope and open a new one so that we don't put a goto label in the middle
             // of a scope.
@@ -1931,19 +1984,19 @@ namespace Internal.IL
 
                     AppendLine();
                     Append("__finallyReturn");
-                    Append(IntToString(i));
+                    Append(i.ToStringInvariant());
                     Append(" = ");
                     Append(returnLabel);
                     AppendSemicolon();
 
                     AppendLine();
                     Append("goto _bb");
-                    Append(IntToString(r.ILRegion.HandlerOffset));
+                    Append(r.ILRegion.HandlerOffset.ToStringInvariant());
                     AppendSemicolon();
 
                     AppendEmptyLine();
                     Append("__returnFromFinally");
-                    Append(IntToString(i));
+                    Append(i.ToStringInvariant());
                     Append("_");
                     Append(returnLabel);
                     Append(":");
@@ -1955,7 +2008,7 @@ namespace Internal.IL
 
             AppendLine();
             Append("goto _bb");
-            Append(IntToString(target.StartOffset));
+            Append(target.StartOffset.ToStringInvariant());
             AppendSemicolon();
 
             MarkBasicBlock(target);
@@ -1987,7 +2040,7 @@ namespace Internal.IL
 
             AppendLine();
             Append("goto __endFinally");
-            Append(IntToString(finallyIndex));
+            Append(finallyIndex.ToStringInvariant());
             AppendSemicolon();
         }
 
@@ -1996,14 +2049,14 @@ namespace Internal.IL
             TypeDesc type = (TypeDesc)_methodIL.GetObject(token);
             TypeDesc arrayType = type.Context.GetArrayType(type);
 
-            var numElements = Pop();
+            var numElements = _stack.Pop();
 
             PushTemp(StackValueKind.ObjRef, arrayType);
 
             AddTypeReference(arrayType, true);
 
             Append("__allocate_array(");
-            Append(numElements.Value.Name);
+            Append(numElements);
             Append(", ");
             Append(_writer.GetCppTypeName(arrayType));
             Append("::__getMethodTable()");
@@ -2022,15 +2075,15 @@ namespace Internal.IL
             if (elementType == null)
                 elementType = GetWellKnownType(WellKnownType.Object);
 
-            var index = Pop();
-            var arrayPtr = Pop();
+            var index = _stack.Pop();
+            var arrayPtr = _stack.Pop();
 
             // Range check
             AppendLine();
             Append("__range_check(");
-            Append(arrayPtr.Value.Name);
+            Append(arrayPtr);
             Append(",");
-            Append(index.Value.Name);
+            Append(index);
             Append(");");
 
             PushTemp(GetStackValueKind(elementType), elementType);
@@ -2038,11 +2091,11 @@ namespace Internal.IL
             Append("*(");
             Append(_writer.GetCppSignatureTypeName(elementType));
             Append("*)((char *)");
-            Append(arrayPtr.Value.Name);
+            Append(arrayPtr);
             Append(" + ARRAY_BASE + sizeof(");
             Append(_writer.GetCppSignatureTypeName(elementType));
             Append(") * ");
-            Append(index.Value.Name);
+            Append(index);
             Append(")");
 
             AppendSemicolon();
@@ -2059,16 +2112,16 @@ namespace Internal.IL
             if (elementType == null)
                 elementType = GetWellKnownType(WellKnownType.Object);
 
-            var value = Pop();
-            var index = Pop();
-            var arrayPtr = Pop();
+            var value = _stack.Pop();
+            var index = _stack.Pop();
+            var arrayPtr = _stack.Pop();
 
             // Range check
             AppendLine();
             Append("__range_check(");
-            Append(arrayPtr.Value.Name);
+            Append(arrayPtr);
             Append(",");
-            Append(index.Value.Name);
+            Append(index);
             Append(");");
 
             // TODO: Array covariance
@@ -2078,15 +2131,15 @@ namespace Internal.IL
             Append("*(");
             Append(_writer.GetCppSignatureTypeName(elementType));
             Append("*)((char *)");
-            Append(arrayPtr.Value.Name);
+            Append(arrayPtr);
             Append(" + ARRAY_BASE + sizeof(");
             Append(_writer.GetCppSignatureTypeName(elementType));
             Append(") * ");
-            Append(index.Value.Name);
+            Append(index);
             Append(") = ");
 
-            AppendCastIfNecessary(elementType, value.Kind);
-            Append(value.Value.Name);
+            AppendCastIfNecessary(elementType, value);
+            Append(value);
 
             AppendSemicolon();
         }
@@ -2094,15 +2147,15 @@ namespace Internal.IL
         private void ImportAddressOfElement(int token)
         {
             TypeDesc elementType = (TypeDesc)_methodIL.GetObject(token);
-            var index = Pop();
-            var arrayPtr = Pop();
+            var index = _stack.Pop();
+            var arrayPtr = _stack.Pop();
 
             // Range check
             AppendLine();
             Append("__range_check(");
-            Append(arrayPtr.Value.Name);
+            Append(arrayPtr);
             Append(",");
-            Append(index.Value.Name);
+            Append(index);
             Append(");");
 
             TypeDesc byRef = elementType.MakeByRefType();
@@ -2113,11 +2166,11 @@ namespace Internal.IL
             Append("(");
             Append(_writer.GetCppSignatureTypeName(elementType));
             Append("*)((char *)");
-            Append(arrayPtr.Value.Name);
+            Append(arrayPtr);
             Append(" + ARRAY_BASE + sizeof(");
             Append(_writer.GetCppSignatureTypeName(elementType));
             Append(") * ");
-            Append(index.Value.Name);
+            Append(index);
             Append(")");
 
             AppendSemicolon();
@@ -2125,12 +2178,12 @@ namespace Internal.IL
 
         private void ImportLoadLength()
         {
-            var arrayPtr = Pop();
+            var arrayPtr = _stack.Pop();
 
             PushTemp(StackValueKind.NativeInt);
 
             Append("*((intptr_t *)");
-            Append(arrayPtr.Value.Name);
+            Append(arrayPtr);
             Append("+ 1)");
 
             AppendSemicolon();
@@ -2138,12 +2191,15 @@ namespace Internal.IL
 
         private void ImportUnaryOperation(ILOpcode opCode)
         {
-            var argument = Pop();
+            var argument = _stack.Pop();
+
+            if (argument.Kind == StackValueKind.Float)
+                throw new NotImplementedException();
 
             PushTemp(argument.Kind, argument.Type);
 
             Append((opCode == ILOpcode.neg) ? "~" : "!");
-            Append(argument.Value.Name);
+            Append(argument);
 
             AppendSemicolon();
         }
@@ -2157,7 +2213,7 @@ namespace Internal.IL
         {
             var type = ResolveTypeToken(token);
 
-            var obj = Pop();
+            var obj = _stack.Pop();
 
             if (opCode == ILOpcode.unbox)
             {
@@ -2182,14 +2238,17 @@ namespace Internal.IL
                     Append("*)");
                 }
 
+                Append("(");
+                Append(_writer.GetCppSignatureTypeName(type));
+                Append("*)");
                 Append("((void **)");
-                Append(obj.Value.Name);
+                Append(obj);
                 Append("+1)");
             }
             else
             {
                 // TODO: Cast
-                Append(obj.Value.Name);
+                Append(obj);
             }
 
             AppendSemicolon();
@@ -2214,33 +2273,44 @@ namespace Internal.IL
         {
             var ldtokenValue = _methodIL.GetObject(token);
             WellKnownType ldtokenKind;
+            string name;
+            StackEntry value;
             if (ldtokenValue is TypeDesc)
+            {
                 ldtokenKind = WellKnownType.RuntimeTypeHandle;
+                AddTypeReference((TypeDesc)ldtokenValue, false);
+
+                MethodDesc helper = _typeSystemContext.GetHelperEntryPoint("LdTokenHelpers", "GetRuntimeTypeHandle");
+                AddMethodReference(helper);
+
+                name = String.Concat(
+                    _writer.GetCppTypeName(helper.OwningType),
+                    "::",
+                    _writer.GetCppMethodName(helper),
+                    "((intptr_t)",
+                    _writer.GetCppTypeName((TypeDesc)ldtokenValue),
+                    "::__getMethodTable())");
+
+                value = new LdTokenEntry<TypeDesc>(StackValueKind.ValueType, name, (TypeDesc)ldtokenValue, GetWellKnownType(ldtokenKind));
+            }
             else if (ldtokenValue is FieldDesc)
+            {
                 ldtokenKind = WellKnownType.RuntimeFieldHandle;
+                value = new LdTokenEntry<FieldDesc>(StackValueKind.ValueType, null, (FieldDesc) ldtokenValue, GetWellKnownType(ldtokenKind));
+            }
             else if (ldtokenValue is MethodDesc)
-                ldtokenKind = WellKnownType.RuntimeMethodHandle;
+            {
+                throw new NotImplementedException();
+            }
             else
                 throw new InvalidOperationException();
 
-            if (ldtokenKind != WellKnownType.RuntimeFieldHandle)
-                throw new NotImplementedException();
-
-            var value = new StackValue
-            {
-                Kind = StackValueKind.ValueType,
-                Value = new Value
-                {
-                    Aux = ldtokenValue
-                },
-                Type = GetWellKnownType(ldtokenKind),
-            };
-            Push(value);
+            _stack.Push(value);
         }
 
         private void ImportLocalAlloc()
         {
-            StackValue count = Pop();
+            StackEntry count = _stack.Pop();
 
             // TODO: this is machine dependent and might not result in a HW stack overflow exception
             // TODO: might not have enough alignment guarantees for the allocated buffer
@@ -2250,22 +2320,22 @@ namespace Internal.IL
             Append("void* ");
             Append(bufferName);
             Append(" = alloca(");
-            Append(count.Value.Name);
+            Append(count);
             Append(")");
             AppendSemicolon();
 
-            if (_methodIL.GetInitLocals())
+            if (_methodIL.IsInitLocals)
             {
                 AppendLine();
                 Append("memset(");
                 Append(bufferName);
                 Append(", 0, ");
-                Append(count.Value.Name);
+                Append(count);
                 Append(")");
                 AppendSemicolon();
             }
 
-            Push(StackValueKind.NativeInt, new Value(bufferName));
+            PushExpression(StackValueKind.NativeInt, bufferName);
         }
 
         private void ImportEndFilter()
@@ -2295,7 +2365,7 @@ namespace Internal.IL
             // TODO: Remove
             _writer.GetCppSignatureTypeName(type);
 
-            Push(StackValueKind.Int32, new Value("sizeof(" + _writer.GetCppTypeName(type) + ")"));
+            PushExpression(StackValueKind.Int32, "sizeof(" + _writer.GetCppTypeName(type) + ")");
         }
 
         private void ImportRefAnyType()

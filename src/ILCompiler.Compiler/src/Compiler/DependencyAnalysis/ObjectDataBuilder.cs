@@ -4,14 +4,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Internal.TypeSystem;
+
+using Debug = System.Diagnostics.Debug;
 
 namespace ILCompiler.DependencyAnalysis
 {
-    public struct ObjectDataBuilder
+    public struct ObjectDataBuilder : Internal.Runtime.ITargetBinaryWriter
     {
         public ObjectDataBuilder(NodeFactory factory)
         {
@@ -20,6 +19,9 @@ namespace ILCompiler.DependencyAnalysis
             _relocs = new ArrayBuilder<Relocation>();
             Alignment = 1;
             DefinedSymbols = new ArrayBuilder<ISymbolNode>();
+#if DEBUG
+            _numReservations = 0;
+#endif
         }
 
         private TargetDetails _target;
@@ -28,11 +30,23 @@ namespace ILCompiler.DependencyAnalysis
         internal int Alignment;
         internal ArrayBuilder<ISymbolNode> DefinedSymbols;
 
+#if DEBUG
+        private int _numReservations;
+#endif
+
         public int CountBytes
         {
             get
             {
                 return _data.Count;
+            }
+        }
+
+        public int TargetPointerSize
+        {
+            get
+            {
+                return _target.PointerSize;
             }
         }
 
@@ -77,6 +91,63 @@ namespace ILCompiler.DependencyAnalysis
             EmitByte((byte)((emit >> 56) & 0xFF));
         }
 
+        public void EmitNaturalInt(int emit)
+        {
+            if (_target.PointerSize == 8)
+            {
+                EmitLong(emit);
+            }
+            else
+            {
+                Debug.Assert(_target.PointerSize == 4);
+                EmitInt(emit);
+            }
+        }
+
+        public void EmitHalfNaturalInt(short emit)
+        {
+            if (_target.PointerSize == 8)
+            {
+                EmitInt(emit);
+            }
+            else
+            {
+                Debug.Assert(_target.PointerSize == 4);
+                EmitShort(emit);
+            }
+        }
+
+        public void EmitCompressedUInt(uint emit)
+        {
+            if (emit < 128)
+            {
+                EmitByte((byte)(emit * 2 + 0));
+            }
+            else if (emit < 128 * 128)
+            {
+                EmitByte((byte)(emit * 4 + 1));
+                EmitByte((byte)(emit >> 6));
+            }
+            else if (emit < 128 * 128 * 128)
+            {
+                EmitByte((byte)(emit * 8 + 3));
+                EmitByte((byte)(emit >> 5));
+                EmitByte((byte)(emit >> 13));
+            }
+            else if (emit < 128 * 128 * 128 * 128)
+            {
+                EmitByte((byte)(emit * 16 + 7));
+                EmitByte((byte)(emit >> 4));
+                EmitByte((byte)(emit >> 12));
+                EmitByte((byte)(emit >> 20));
+            }
+            else
+            {
+                EmitByte((byte)15);
+                EmitInt((int)emit);
+            }
+        }
+
         public void EmitBytes(byte[] bytes)
         {
             _data.Append(bytes);
@@ -92,13 +163,65 @@ namespace ILCompiler.DependencyAnalysis
             _data.ZeroExtend(numBytes);
         }
 
+        private Reservation GetReservationTicket(int size)
+        {
+#if DEBUG
+            _numReservations++;
+#endif
+            Reservation ticket = (Reservation)_data.Count;
+            _data.ZeroExtend(size);
+            return ticket;
+        }
+
+        private int ReturnReservationTicket(Reservation reservation)
+        {
+#if DEBUG
+            Debug.Assert(_numReservations > 0);
+            _numReservations--;
+#endif
+            return (int)reservation;
+        }
+
+        public Reservation ReserveByte()
+        {
+            return GetReservationTicket(1);
+        }
+
+        public void EmitByte(Reservation reservation, byte emit)
+        {
+            int offset = ReturnReservationTicket(reservation);
+            _data[offset] = emit;
+        }
+
+        public Reservation ReserveShort()
+        {
+            return GetReservationTicket(2);
+        }
+
+        public void EmitShort(Reservation reservation, short emit)
+        {
+            int offset = ReturnReservationTicket(reservation);
+            _data[offset] = (byte)(emit & 0xFF);
+            _data[offset + 1] = (byte)((emit >> 8) & 0xFF);
+        }
+
+        public Reservation ReserveInt()
+        {
+            return GetReservationTicket(4);
+        }
+
+        public void EmitInt(Reservation reservation, int emit)
+        {
+            int offset = ReturnReservationTicket(reservation);
+            _data[offset] = (byte)(emit & 0xFF);
+            _data[offset + 1] = (byte)((emit >> 8) & 0xFF);
+            _data[offset + 2] = (byte)((emit >> 16) & 0xFF);
+            _data[offset + 3] = (byte)((emit >> 24) & 0xFF);
+        }
+
         public void AddRelocAtOffset(ISymbolNode symbol, RelocType relocType, int offset, int delta = 0)
         {
-            Relocation symbolReloc = new Relocation();
-            symbolReloc.Target = symbol;
-            symbolReloc.RelocType = relocType;
-            symbolReloc.Offset = offset;
-            symbolReloc.Delta = delta;
+            Relocation symbolReloc = new Relocation(relocType, offset, symbol, delta);
             _relocs.Add(symbolReloc);
         }
 
@@ -110,6 +233,7 @@ namespace ILCompiler.DependencyAnalysis
             switch (relocType)
             {
                 case RelocType.IMAGE_REL_BASED_REL32:
+                case RelocType.IMAGE_REL_BASED_ABSOLUTE:
                     EmitInt(0);
                     break;
                 case RelocType.IMAGE_REL_BASED_DIR64:
@@ -122,18 +246,15 @@ namespace ILCompiler.DependencyAnalysis
 
         public void EmitPointerReloc(ISymbolNode symbol, int delta = 0)
         {
-            if (_target.PointerSize == 8)
-            {
-                EmitReloc(symbol, RelocType.IMAGE_REL_BASED_DIR64, delta);
-            }
-            else
-            {
-                throw new NotImplementedException();
-            }
+            EmitReloc(symbol, (_target.PointerSize == 8) ? RelocType.IMAGE_REL_BASED_DIR64 : RelocType.IMAGE_REL_BASED_HIGHLOW, delta);
         }
 
         public ObjectNode.ObjectData ToObjectData()
         {
+#if DEBUG
+            Debug.Assert(_numReservations == 0);
+#endif
+
             ObjectNode.ObjectData returnData = new ObjectNode.ObjectData(_data.ToArray(),
                                                                          _relocs.ToArray(),
                                                                          Alignment,
@@ -141,5 +262,7 @@ namespace ILCompiler.DependencyAnalysis
 
             return returnData;
         }
+
+        public enum Reservation { }
     }
 }

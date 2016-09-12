@@ -47,6 +47,54 @@ namespace Internal.TypeSystem
                 return false;
             }
         }
+
+        /// <summary>
+        /// Gets a value specifying whether the implementation of this method
+        /// is provided by the runtime (i.e., through generated IL).
+        /// </summary>
+        public virtual bool IsRuntimeImplemented
+        {
+            get
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Gets a value specifying whether the implementation of this method is
+        /// provided externally by calling out into the runtime.
+        /// </summary>
+        public virtual bool IsInternalCall
+        {
+            get
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Gets a value specifying whether this method is directly callable
+        /// by external unmanaged code.
+        /// </summary>
+        public virtual bool IsNativeCallable
+        {
+            get
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Gets a value specifying whether this method is an exported managed
+        /// entrypoint.
+        /// </summary>
+        public virtual bool IsRuntimeExport
+        {
+            get
+            {
+                return false;
+            }
+        }
     }
 
     // Additional members of InstantiatedMethod related to code generation.
@@ -75,6 +123,30 @@ namespace Internal.TypeSystem
                 return _methodDef.IsAggressiveInlining;
             }
         }
+
+        public override bool IsRuntimeImplemented
+        {
+            get
+            {
+                return _methodDef.IsRuntimeImplemented;
+            }
+        }
+
+        public override bool IsInternalCall
+        {
+            get
+            {
+                return _methodDef.IsInternalCall;
+            }
+        }
+
+        public override bool IsNativeCallable
+        {
+            get
+            {
+                return _methodDef.IsNativeCallable;
+            }
+        }
     }
 
     // Additional members of MethodForInstantiatedType related to code generation.
@@ -101,6 +173,30 @@ namespace Internal.TypeSystem
             get
             {
                 return _typicalMethodDef.IsAggressiveInlining;
+            }
+        }
+
+        public override bool IsRuntimeImplemented
+        {
+            get
+            {
+                return _typicalMethodDef.IsRuntimeImplemented;
+            }
+        }
+
+        public override bool IsInternalCall
+        {
+            get
+            {
+                return _typicalMethodDef.IsInternalCall;
+            }
+        }
+
+        public override bool IsNativeCallable
+        {
+            get
+            {
+                return _typicalMethodDef.IsNativeCallable;
             }
         }
     }

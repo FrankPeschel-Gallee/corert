@@ -7,7 +7,7 @@
 #include "daccess.h"
 #include "PalRedhawkCommon.h"
 #include "PalRedhawk.h"
-#include "assert.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "holder.h"
 #include "Crst.h"
@@ -15,16 +15,17 @@
 #include "RWLock.h"
 #include "RuntimeInstance.h"
 #include "event.h"
+#include "regdisplay.h"
+#include "StackFrameIterator.h"
+#include "thread.h"
 #include "threadstore.h"
+#include "threadstore.inl"
 #include "gcrhinterface.h"
 #include "shash.h"
 #include "module.h"
 #include "eetype.h"
 #include "GenericInstance.h"
 #include "varint.h"
-#include "regdisplay.h"
-#include "StackFrameIterator.h"
-#include "thread.h"
 #include "DebugEventSource.h"
 
 #include "CommonMacros.inl"
@@ -449,27 +450,6 @@ bool RuntimeInstance::RegisterModule(ModuleHeader *pModuleHeader)
     return true;
 }
 
-bool RuntimeInstance::RegisterSimpleModule(SimpleModuleHeader *pModuleHeader)
-{
-    CreateHolder<Module> pModule = Module::Create(pModuleHeader);
-
-    if (NULL == pModule)
-        return false;
-
-    {
-        // WARNING: This region must be kept small and must not callout 
-        // to arbitrary code.  See Thread::Hijack for more details.
-        ReaderWriterLock::WriteHolder write(&m_ModuleListLock);
-        m_ModuleList.PushHead(pModule);
-    }
-
-    pModule.SuppressRelease();
-    // This event must occur after the module is added to the enumeration
-    DebugEventSource::SendModuleLoadEvent(pModule);
-    return true;
-}
-
-
 void RuntimeInstance::UnregisterModule(Module *pModule)
 {
     {
@@ -817,10 +797,20 @@ COOP_PINVOKE_HELPER(EEType *, RhGetGenericInstantiation, (EEType *              
                                                           EEType ***             ppInstantiation,
                                                           GenericVarianceType ** ppVarianceInfo))
 {
+#if CORERT
+    *pArity = pEEType->get_GenericArity();
+    *ppInstantiation = pEEType->get_GenericArguments();
+    if (pEEType->HasGenericVariance())
+        *ppVarianceInfo = pEEType->get_GenericVariance();
+    else
+        *ppVarianceInfo = NULL;
+    return pEEType->get_GenericDefinition();
+#else
     return GetRuntimeInstance()->GetGenericInstantiation(pEEType,
                                                          pArity,
                                                          ppInstantiation,
                                                          ppVarianceInfo);
+#endif
 }
 
 COOP_PINVOKE_HELPER(bool, RhSetGenericInstantiation, (EEType *               pEEType,

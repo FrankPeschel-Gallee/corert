@@ -3,6 +3,8 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
+
 using Debug = System.Diagnostics.Debug;
 
 namespace Internal.TypeSystem
@@ -13,7 +15,7 @@ namespace Internal.TypeSystem
     /// </summary>
     public class MetadataFieldLayoutAlgorithm : FieldLayoutAlgorithm
     {
-        public override ComputedInstanceFieldLayout ComputeInstanceFieldLayout(DefType defType)
+        public override ComputedInstanceFieldLayout ComputeInstanceLayout(DefType defType, InstanceLayoutKind layoutKind)
         {
             MetadataType type = (MetadataType)defType;
             // CLI - Partition 1, section 9.5 - Generic types shall not be marked explicitlayout.  
@@ -39,6 +41,7 @@ namespace Internal.TypeSystem
                 // Global types do not do the rest of instance field layout.
                 ComputedInstanceFieldLayout result = new ComputedInstanceFieldLayout();
                 result.PackValue = type.Context.Target.DefaultPackingSize;
+                result.Offsets = Array.Empty<FieldAndOffset>();
                 return result;
             }
 
@@ -112,13 +115,17 @@ namespace Internal.TypeSystem
                         new FieldAndOffset(instanceField, 0)
                     };
                 }
+                else
+                {
+                    result.Offsets = Array.Empty<FieldAndOffset>();
+                }
 
                 return result;
             }
 
             // Verify that no ByRef types present in this type's fields
             foreach (var field in type.GetFields())
-                if (field.FieldType is ByRefType)
+                if (field.FieldType.IsByRef)
                     throw new TypeLoadException();
 
             // If the type has layout, read its packing and size info
@@ -155,7 +162,7 @@ namespace Internal.TypeSystem
             }
         }
 
-        public unsafe override ComputedStaticFieldLayout ComputeStaticFieldLayout(DefType defType)
+        public unsafe override ComputedStaticFieldLayout ComputeStaticFieldLayout(DefType defType, StaticLayoutKind layoutKind)
         {
             MetadataType type = (MetadataType)defType;
             int numStaticFields = 0;
@@ -175,7 +182,7 @@ namespace Internal.TypeSystem
 
             if (numStaticFields == 0)
             {
-                result.Offsets = null;
+                result.Offsets = Array.Empty<FieldAndOffset>();
                 return result;
             }
 
@@ -212,7 +219,7 @@ namespace Internal.TypeSystem
             return result;
         }
 
-        public override bool ComputeContainsPointers(DefType type)
+        public override bool ComputeContainsGCPointers(DefType type)
         {
             bool someFieldContainsPointers = false;
 
@@ -227,13 +234,13 @@ namespace Internal.TypeSystem
                     if (fieldType.IsPrimitive)
                         continue;
 
-                    if (((MetadataType)fieldType).ContainsPointers)
+                    if (((DefType)fieldType).ContainsGCPointers)
                     {
                         someFieldContainsPointers = true;
                         break;
                     }
                 }
-                else if (fieldType is DefType || fieldType is ArrayType || fieldType.IsByRef)
+                else if (fieldType.IsGCPointer || fieldType.IsByRef)
                 {
                     someFieldContainsPointers = true;
                     break;
@@ -285,28 +292,23 @@ namespace Internal.TypeSystem
 
                 int computedOffset = checked(fieldAndOffset.Offset + cumulativeInstanceFieldPos);
 
-                switch (fieldAndOffset.Field.FieldType.Category)
+                if (fieldAndOffset.Field.FieldType.IsGCPointer)
                 {
-                    case TypeFlags.Array:
-                    case TypeFlags.Class:
+                    int offsetModulo = computedOffset % type.Context.Target.PointerSize;
+                    if (offsetModulo != 0)
+                    {
+                        // GC pointers MUST be aligned.
+                        if (offsetModulo == 4)
                         {
-                            int offsetModulo = computedOffset % type.Context.Target.PointerSize;
-                            if (offsetModulo != 0)
-                            {
-                                // GC pointers MUST be aligned.
-                                if (offsetModulo == 4)
-                                {
-                                    // We must be attempting to compile a 32bit app targeting a 64 bit platform.
-                                    throw new TypeLoadException();
-                                }
-                                else
-                                {
-                                    // Its just wrong
-                                    throw new TypeLoadException();
-                                }
-                            }
-                            break;
+                            // We must be attempting to compile a 32bit app targeting a 64 bit platform.
+                            throw new TypeLoadException();
                         }
+                        else
+                        {
+                            // Its just wrong
+                            throw new TypeLoadException();
+                        }
+                    }
                 }
 
                 offsets[fieldOrdinal] = new FieldAndOffset(fieldAndOffset.Field, computedOffset);
@@ -401,11 +403,11 @@ namespace Internal.TypeSystem
         {
             SizeAndAlignment result;
 
-            if (fieldType is MetadataType)
+            if (fieldType.IsDefType)
             {
                 if (fieldType.IsValueType)
                 {
-                    MetadataType metadataType = (MetadataType)fieldType;
+                    DefType metadataType = (DefType)fieldType;
                     result.Size = metadataType.InstanceFieldSize;
                     result.Alignment = metadataType.InstanceFieldAlignment;
                 }
@@ -415,7 +417,7 @@ namespace Internal.TypeSystem
                     result.Alignment = fieldType.Context.Target.PointerSize;
                 }
             }
-            else if (fieldType is ByRefType || fieldType is ArrayType)
+            else if (fieldType.IsByRef || fieldType.IsArray)
             {
                 // This could use InstanceFieldSize/Alignment (and those results should match what's here)
                 // but, its more efficient to just assume pointer size instead of fulling processing
@@ -423,7 +425,7 @@ namespace Internal.TypeSystem
                 result.Size = fieldType.Context.Target.PointerSize;
                 result.Alignment = fieldType.Context.Target.PointerSize;
             }
-            else if (fieldType is PointerType)
+            else if (fieldType.IsPointer)
             {
                 result.Size = fieldType.Context.Target.PointerSize;
                 result.Alignment = fieldType.Context.Target.PointerSize;
@@ -441,7 +443,7 @@ namespace Internal.TypeSystem
             var layoutMetadata = type.GetClassLayout();
 
             // If a type contains pointers then the metadata specified packing size is ignored (On desktop this is disqualification from ManagedSequential)
-            if (layoutMetadata.PackingSize == 0 || type.ContainsPointers)
+            if (layoutMetadata.PackingSize == 0 || type.ContainsGCPointers)
                 return type.Context.Target.DefaultPackingSize;
             else
                 return layoutMetadata.PackingSize;
@@ -482,6 +484,128 @@ namespace Internal.TypeSystem
             byteCount.Alignment = alignment;
 
             return result;
+        }
+
+        public override ValueTypeShapeCharacteristics ComputeValueTypeShapeCharacteristics(DefType type)
+        {
+            if (!type.IsValueType)
+                return ValueTypeShapeCharacteristics.None;
+
+            ValueTypeShapeCharacteristics result = ComputeHomogeneousFloatAggregateCharacteristic(type);
+
+            // TODO: System V AMD64 characteristics (https://github.com/dotnet/corert/issues/158)
+
+            return result;
+        }
+
+        private ValueTypeShapeCharacteristics ComputeHomogeneousFloatAggregateCharacteristic(DefType type)
+        {
+            Debug.Assert(type.IsValueType);
+
+            MetadataType metadataType = (MetadataType)type;
+
+            // No HFAs with explicit layout. There may be cases where explicit layout may be still
+            // eligible for HFA, but it is hard to tell the real intent. Make it simple and just 
+            // unconditionally disable HFAs for explicit layout.
+            if (metadataType.IsExplicitLayout)
+                return ValueTypeShapeCharacteristics.None;
+
+            switch (metadataType.Category)
+            {
+                case TypeFlags.Single:
+                case TypeFlags.Double:
+                    // These are the primitive types that constitute a HFA type.
+                    return ValueTypeShapeCharacteristics.HomogenousFloatAggregate;
+
+                case TypeFlags.ValueType:
+                    DefType expectedElementType = null;
+
+                    foreach (FieldDesc field in metadataType.GetFields())
+                    {
+                        if (field.IsStatic)
+                            continue;
+
+                        // If a field isn't a DefType, then this type cannot be an HFA type
+                        // If a field isn't a HFA type, then this type cannot be an HFA type
+                        DefType fieldType = field.FieldType as DefType;
+                        if (fieldType == null || !fieldType.IsHfa)
+                            return ValueTypeShapeCharacteristics.None;
+
+                        if (expectedElementType == null)
+                        {
+                            // If we hadn't yet figured out what form of HFA this type might be, we've
+                            // now found one case.
+                            expectedElementType = fieldType.HfaElementType;
+                            Debug.Assert(expectedElementType != null);
+                        }
+                        else if (expectedElementType != fieldType.HfaElementType)
+                        {
+                            // If we had already determined the possible HFA type of the current type, but
+                            // the field we've encountered is not of that type, then the current type cannot
+                            // be an HFA type.
+                            return ValueTypeShapeCharacteristics.None;
+                        }
+                    }
+
+                    // No fields means this is not HFA.
+                    if (expectedElementType == null)
+                        return ValueTypeShapeCharacteristics.None;
+
+                    // Note that we check the total size, but do not perform any checks on number of fields:
+                    // - Type of fields can be HFA valuetype itself
+                    // - Managed C++ HFA valuetypes have just one <alignment member> of type float to signal that 
+                    //   the valuetype is HFA and explicitly specified size
+                    int maxSize = expectedElementType.InstanceFieldSize * expectedElementType.Context.Target.MaximumHfaElementCount;
+                    if (type.InstanceFieldSize > maxSize)
+                        return ValueTypeShapeCharacteristics.None;
+
+                    // All the tests passed. This is an HFA type.
+                    return ValueTypeShapeCharacteristics.HomogenousFloatAggregate;
+            }
+
+            return ValueTypeShapeCharacteristics.None;
+        }
+
+        public override DefType ComputeHomogeneousFloatAggregateElementType(DefType type)
+        {
+            if (!type.IsHfa)
+                return null;
+
+            if (type.IsWellKnownType(WellKnownType.Double) || type.IsWellKnownType(WellKnownType.Single))
+                return type;
+
+            for (;;)
+            {
+                Debug.Assert(type.IsValueType);
+
+                // All HFA fields have to be of the same HFA type, so we can just return the type of the first field
+                TypeDesc firstFieldType = null;
+                foreach (var field in type.GetFields())
+                {
+                    if (field.IsStatic)
+                        continue;
+
+                    firstFieldType = field.FieldType;
+                    break;
+                }
+                Debug.Assert(firstFieldType != null, "Why is IsHfa true on this type?");
+
+                switch (firstFieldType.Category)
+                {
+                    case TypeFlags.Single:
+                    case TypeFlags.Double:
+                        return (DefType)firstFieldType;
+
+                    case TypeFlags.ValueType:
+                        // Drill into the struct and find the type of its first field
+                        type = (DefType)firstFieldType;
+                        break;
+
+                    default:
+                        Debug.Assert(false, "Why is IsHfa true on this type?");
+                        return null;
+                }
+            }
         }
 
         private struct SizeAndAlignment

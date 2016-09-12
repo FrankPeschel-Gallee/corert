@@ -8,7 +8,7 @@
 #include "event.h"
 #include "PalRedhawkCommon.h"
 #include "PalRedhawk.h"
-#include "assert.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "varint.h"
@@ -19,6 +19,7 @@
 #include "Crst.h"
 #include "RWLock.h"
 #include "threadstore.h"
+#include "threadstore.inl"
 
 //
 // -----------------------------------------------------------------------------------------------------------
@@ -90,9 +91,9 @@ uint32_t CLREventStatic::Wait(uint32_t dwMilliseconds, bool bAlertable, bool bAl
 
         if (NULL != pCurThread)
         {
-            if (pCurThread->PreemptiveGCDisabled())
+            if (pCurThread->IsCurrentThreadInCooperativeMode())
             {
-                pCurThread->EnablePreemptiveGC();
+                pCurThread->EnablePreemptiveMode();
                 disablePreemptive = true;
             }
         }
@@ -101,7 +102,7 @@ uint32_t CLREventStatic::Wait(uint32_t dwMilliseconds, bool bAlertable, bool bAl
 
         if (disablePreemptive)
         {
-            pCurThread->DisablePreemptiveGC();
+            pCurThread->DisablePreemptiveMode();
         }
     }
 

@@ -17,7 +17,7 @@ namespace System
     [StructLayout(LayoutKind.Sequential)]
     public unsafe struct RuntimeTypeHandle
     {
-#if CORERT
+#if CLR_RUNTIMETYPEHANDLE
         internal RuntimeTypeHandle(RuntimeType type)
         {
             _type = type;
@@ -55,13 +55,13 @@ namespace System
             if (IsNull)
                 return 0;
 
-            return (int)RuntimeImports.RhGetEETypeHash(this.ToEETypePtr());
+            return this.ToEETypePtr().GetHashCode();
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Equals(RuntimeTypeHandle handle)
         {
-#if CORERT
+#if CLR_RUNTIMETYPEHANDLE
             return Object.ReferenceEquals(_type, handle._type);
 #else
             if (_value == handle._value)
@@ -109,26 +109,18 @@ namespace System
 
         internal EETypePtr ToEETypePtr()
         {
-#if CORERT
+#if CLR_RUNTIMETYPEHANDLE
             return _type.ToEETypePtr();
 #else
             return new EETypePtr(_value);
 #endif
         }
 
-        internal RuntimeImports.RhEETypeClassification Classification
-        {
-            get
-            {
-                return RuntimeImports.RhGetEETypeClassification(this.ToEETypePtr());
-            }
-        }
-
         internal bool IsNull
         {
             get
             {
-#if CORERT
+#if CLR_RUNTIMETYPEHANDLE
                 return _type == null;
 #else
                 return _value == new IntPtr(0);
@@ -159,12 +151,19 @@ namespace System
             }
         }
 
+#if CORERT
+        [Intrinsic]
+#endif
+        internal static IntPtr GetValueInternal(RuntimeTypeHandle handle)
+        {
+            return handle.RawValue;
+        }
 
         internal IntPtr RawValue
         {
             get
             {
-#if CORERT
+#if CLR_RUNTIMETYPEHANDLE
                 return ToEETypePtr().RawValue;
 #else
                 return _value;
@@ -172,7 +171,7 @@ namespace System
             }
         }
 
-#if CORERT
+#if CLR_RUNTIMETYPEHANDLE
         internal RuntimeType RuntimeType
         {
             get
@@ -182,7 +181,7 @@ namespace System
         }
 #endif
 
-#if CORERT
+#if CLR_RUNTIMETYPEHANDLE
         private RuntimeType _type;
 #else
         private IntPtr _value;

@@ -35,7 +35,7 @@ namespace System
             // ProjectN:936613 - Early exit for variable sized types (strings, arrays, etc.) as we cannot call
             // CreateInstanceIntrinsic on them since the intrinsic will attempt to allocate an instance of these types
             // and that is verboten (it results in silent heap corruption!).
-            if (typeof(T).TypeHandle.ToEETypePtr().ComponentSize != 0)
+            if (EETypePtr.EETypePtrOf<T>().ComponentSize != 0)
             {
                 // ComponentSize > 0 indicates an array-like type (e.g. string, array, etc).
                 missingDefaultConstructor = true;
@@ -68,16 +68,7 @@ namespace System
         }
 
         [Intrinsic]
-#if CORERT
-        // CORERT-TODO: Add CreateInstanceIntrinsic intrinsic support.
-        // https://github.com/dotnet/corert/issues/368
-        private static T CreateInstanceIntrinsic<T>()
-        {
-            throw new NotSupportedException("CreateInstance");
-        }
-#else
         private extern static T CreateInstanceIntrinsic<T>();
-#endif
 
         [ThreadStatic]
         internal static bool s_createInstanceMissingDefaultConstructor;

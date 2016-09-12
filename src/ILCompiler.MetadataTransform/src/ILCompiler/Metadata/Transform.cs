@@ -10,27 +10,16 @@ using Cts = Internal.TypeSystem;
 
 namespace ILCompiler.Metadata
 {
-    public abstract class Transform
-    {
-        public abstract IEnumerable<ScopeDefinition> Scopes { get; }
-
-        public abstract MetadataRecord HandleType(Cts.TypeDesc type);
-
-        // TODO: HandleTypeForwarder
-    }
-
-    public partial class Transform<TPolicy> : Transform
+    /// <summary>
+    /// Provides implementation of the <see cref="MetadataTransform"/> contract.
+    /// This class is generic over the policy to make policy lookups cheap (policy being
+    /// a struct means all the interface calls end up being constrained over the type
+    /// and therefore fully inlineable).
+    /// </summary>
+    internal sealed partial class Transform<TPolicy> : MetadataTransform
         where TPolicy : struct, IMetadataPolicy
     {
         private TPolicy _policy;
-
-        public override IEnumerable<ScopeDefinition> Scopes
-        {
-            get
-            {
-                return _scopeDefs.Records;
-            }
-        }
 
         public Transform(TPolicy policy)
         {
@@ -42,10 +31,10 @@ namespace ILCompiler.Metadata
             if (type.IsArray || type.IsByRef || type.IsPointer)
                 return IsBlocked(((Cts.ParameterizedType)type).ParameterType);
 
-            if (type is Cts.SignatureVariable)
+            if (type.IsSignatureVariable)
                 return false;
 
-            if (type is Cts.InstantiatedType)
+            if (!type.IsTypeDefinition)
             {
                 if (IsBlocked(type.GetTypeDefinition()))
                     return true;

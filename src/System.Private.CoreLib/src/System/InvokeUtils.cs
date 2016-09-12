@@ -53,7 +53,7 @@ namespace System
             if (srcObject == null)
             {
                 // null -> default(T) 
-                if (dstEEType.IsValueType && !RuntimeImports.RhIsNullable(dstEEType))
+                if (dstEEType.IsValueType && !dstEEType.IsNullable)
                     return Runtime.RuntimeImports.RhNewObject(dstEEType);
                 else
                     return null;
@@ -66,7 +66,7 @@ namespace System
                     return srcObject;
 
 
-                if (RuntimeImports.RhIsInterface(dstEEType))
+                if (dstEEType.IsInterface)
                 {
                     ICastable castable = srcObject as ICastable;
                     Exception castError;
@@ -376,7 +376,7 @@ namespace System
                 case DefaultParamTypeDefault:
                     if (thType.ToEETypePtr().IsValueType)
                     {
-                        if (RuntimeImports.RhIsNullable(thType.ToEETypePtr()))
+                        if (thType.ToEETypePtr().IsNullable)
                         {
                             return null;
                         }
@@ -420,6 +420,7 @@ namespace System
             }
         }
 
+        [DebuggerGuidedStepThroughAttribute]
         internal static object CallDynamicInvokeMethod(object thisPtr, IntPtr methodToCall, object thisPtrDynamicInvokeMethod, IntPtr dynamicInvokeHelperMethod, IntPtr dynamicInvokeHelperGenericDictionary, string defaultValueString, object[] parameters, bool invokeMethodHelperIsThisCall = true, bool methodToCallIsThisCall = true)
         {
             bool fDontWrapInTargetInvocationException = false;
@@ -436,7 +437,7 @@ namespace System
             {
                 // If the passed in array is not an actual object[] instance, we need to copy it over to an actual object[]
                 // instance so that the rest of the code can safely create managed object references to individual elements.
-                if (parameters != null && !typeof(object[]).TypeHandle.Equals(new RuntimeTypeHandle(parameters.EETypePtr)))
+                if (parameters != null && EETypePtr.EETypePtrOf<object[]>() != parameters.EETypePtr)
                 {
                     s_parameters = new object[parameters.Length];
                     Array.Copy(parameters, s_parameters, parameters.Length);
@@ -453,18 +454,28 @@ namespace System
 
                 try
                 {
+                    object result = null;
                     if (invokeMethodHelperIsThisCall)
                     {
                         Debug.Assert(methodToCallIsThisCall == true);
-                        return CallIHelperThisCall(thisPtr, methodToCall, thisPtrDynamicInvokeMethod, dynamicInvokeHelperMethod, ref argSetupState);
+                        result = CallIHelperThisCall(thisPtr, methodToCall, thisPtrDynamicInvokeMethod, dynamicInvokeHelperMethod, ref argSetupState);
+                        System.Diagnostics.DebugAnnotations.PreviousCallContainsDebuggerStepInCode();
                     }
                     else
                     {
                         if (dynamicInvokeHelperGenericDictionary != IntPtr.Zero)
-                            return CallIHelperStaticCallWithInstantiation(thisPtr, methodToCall, dynamicInvokeHelperMethod, ref argSetupState, methodToCallIsThisCall, dynamicInvokeHelperGenericDictionary);
+                        {
+                            result = CallIHelperStaticCallWithInstantiation(thisPtr, methodToCall, dynamicInvokeHelperMethod, ref argSetupState, methodToCallIsThisCall, dynamicInvokeHelperGenericDictionary);
+                            DebugAnnotations.PreviousCallContainsDebuggerStepInCode();
+                        }
                         else
-                            return CallIHelperStaticCall(thisPtr, methodToCall, dynamicInvokeHelperMethod, ref argSetupState, methodToCallIsThisCall);
+                        {
+                            result = CallIHelperStaticCall(thisPtr, methodToCall, dynamicInvokeHelperMethod, ref argSetupState, methodToCallIsThisCall);
+                            DebugAnnotations.PreviousCallContainsDebuggerStepInCode();
+                        }
                     }
+                    
+                    return result;
                 }
                 finally
                 {
@@ -542,18 +553,30 @@ namespace System
             throw new PlatformNotSupportedException();
         }
 
+#if CORERT
+        [Intrinsic]
+        [DebuggerStepThrough] // Added by transform on non-CoreRT
+#endif
         internal static object CallIHelperThisCall(object thisPtr, IntPtr methodToCall, object thisPtrForDynamicInvokeHelperMethod, IntPtr dynamicInvokeHelperMethod, ref ArgSetupState argSetupState)
         {
             // Calli the dynamicInvokeHelper method with a bunch of parameters  As this can't actually be defined in C# there is an IL transform that fills this in.
             return null;
         }
 
+#if CORERT
+        [Intrinsic]
+        [DebuggerStepThrough] // Added by transform on non-CoreRT
+#endif
         internal static object CallIHelperStaticCall(object thisPtr, IntPtr methodToCall, IntPtr dynamicInvokeHelperMethod, ref ArgSetupState argSetupState, bool isTargetThisCall)
         {
             // Calli the dynamicInvokeHelper method with a bunch of parameters  As this can't actually be defined in C# there is an IL transform that fills this in.
             return null;
         }
 
+#if CORERT
+        [Intrinsic]
+        [DebuggerStepThrough] // Added by transform on non-CoreRT
+#endif
         internal static object CallIHelperStaticCallWithInstantiation(object thisPtr, IntPtr methodToCall, IntPtr dynamicInvokeHelperMethod, ref ArgSetupState argSetupState, bool isTargetThisCall, IntPtr dynamicInvokeHelperGenericDictionary)
         {
             // Calli the dynamicInvokeHelper method with a bunch of parameters  As this can't actually be defined in C# there is an IL transform that fills this in.
@@ -648,6 +671,10 @@ namespace System
             return null;
         }
 
+#if CORERT
+        [Intrinsic]
+        [DebuggerStepThrough] // Added by transform on non-CoreRT
+#endif
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static void DynamicInvokeUnboxIntoActualNullable(object actualBoxedNullable, object boxedFillObject, EETypePtr nullableType)
         {
@@ -667,6 +694,10 @@ namespace System
             // ret
         }
 
+#if CORERT
+        [Intrinsic]
+        [DebuggerStepThrough] // Added by transform on non-CoreRT
+#endif
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static object DynamicInvokeBoxIntoNonNullable(object actualBoxedNullable)
         {
@@ -776,7 +807,7 @@ namespace System
         {
             object finalObjectToReturn = boxedValuetype;
             EETypePtr eeType = type.ToEETypePtr();
-            bool nullable = RuntimeImports.RhIsNullable(eeType);
+            bool nullable = eeType.IsNullable;
 
             if (finalObjectToReturn == null || nullable || paramType == DynamicInvokeParamType.Ref)
             {
@@ -831,10 +862,10 @@ namespace System
             }
 
             RuntimeTypeHandle widenAndCompareType = type;
-            bool nullable = RuntimeImports.RhIsNullable(type.ToEETypePtr());
+            bool nullable = type.ToEETypePtr().IsNullable;
             if (nullable)
             {
-                widenAndCompareType = new RuntimeTypeHandle(RuntimeImports.RhGetNullableType(type.ToEETypePtr()));
+                widenAndCompareType = new RuntimeTypeHandle(type.ToEETypePtr().NullableType);
             }
 
             if (widenAndCompareType.ToEETypePtr().IsPrimitive || type.ToEETypePtr().IsEnum)

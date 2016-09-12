@@ -605,7 +605,7 @@ namespace System
             if (value == null)
                 throw new ArgumentNullException("value");
 
-            if (value.EETypePtr == typeof(string).TypeHandle.ToEETypePtr())
+            if (value.EETypePtr == EETypePtr.EETypePtrOf<string>())
             {
                 EnumInfo enumInfo = GetEnumInfo(enumType);
                 foreach (KeyValuePair<String, ulong> kv in enumInfo.NamesAndValues)
@@ -792,8 +792,7 @@ namespace System
         {
             EETypePtr eeType = value.EETypePtr;
             // For now, this check is required to flush out pointers.
-            RuntimeImports.RhEETypeClassification classification = RuntimeImports.RhGetEETypeClassification(eeType);
-            if (classification != RuntimeImports.RhEETypeClassification.Regular)
+            if (!eeType.IsDefType)
             {
                 result = 0;
                 return false;

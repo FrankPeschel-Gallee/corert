@@ -44,20 +44,36 @@ typedef void *              HINSTANCE;
 typedef void *              LPSECURITY_ATTRIBUTES;
 typedef void *              LPOVERLAPPED;
 
-typedef void(__stdcall *PFLS_CALLBACK_FUNCTION) (void* lpFlsData);
-#define FLS_OUT_OF_INDEXES ((UInt32)0xFFFFFFFF)
-
 #ifndef GCENV_INCLUDED
 #define CALLBACK            __stdcall
 #define WINAPI              __stdcall
 #define WINBASEAPI          __declspec(dllimport)
 #endif //!GCENV_INCLUDED
 
+#ifdef PLATFORM_UNIX
+#define DIRECTORY_SEPARATOR_CHAR '/'
+#else // PLATFORM_UNIX
+#define DIRECTORY_SEPARATOR_CHAR '\\'
+#endif // PLATFORM_UNIX
+
+typedef union _LARGE_INTEGER {
+    struct {
+#if BIGENDIAN
+        int32_t HighPart;
+        uint32_t LowPart;
+#else
+        uint32_t LowPart;
+        int32_t HighPart;
+#endif
+    } u;
+    int64_t QuadPart;
+} LARGE_INTEGER, *PLARGE_INTEGER;
+
 typedef struct _GUID {
-    unsigned long  Data1;
-    unsigned short Data2;
-    unsigned short Data3;
-    unsigned char  Data4[8];
+    uint32_t Data1;
+    uint16_t Data2;
+    uint16_t Data3;
+    uint8_t Data4[8];
 } GUID;
 
 #define DECLARE_HANDLE(_name) typedef HANDLE _name
@@ -259,12 +275,17 @@ typedef struct DECLSPEC_ALIGN(16) _CONTEXT {
     UInt64 LastExceptionToRip;
     UInt64 LastExceptionFromRip;
 
-    void SetIP(UIntNative ip) { Rip = ip; }
-    void SetSP(UIntNative sp) { Rsp = sp; }
+    void SetIp(UIntNative ip) { Rip = ip; }
+    void SetSp(UIntNative sp) { Rsp = sp; }
+#ifdef UNIX_AMD64_ABI
+    void SetArg0Reg(UIntNative val) { Rdi = val; }
+    void SetArg1Reg(UIntNative val) { Rsi = val; }
+#else // UNIX_AMD64_ABI
     void SetArg0Reg(UIntNative val) { Rcx = val; }
     void SetArg1Reg(UIntNative val) { Rdx = val; }
-    UIntNative GetIP() { return Rip; }
-    UIntNative GetSP() { return Rsp; }
+#endif // UNIX_AMD64_ABI
+    UIntNative GetIp() { return Rip; }
+    UIntNative GetSp() { return Rsp; }
 } CONTEXT, *PCONTEXT;
 #elif defined(_ARM_)
 
@@ -303,11 +324,11 @@ typedef struct DECLSPEC_ALIGN(8) _CONTEXT {
     UInt32 Wcr[ARM_MAX_WATCHPOINTS];
     UInt32 Padding2[2];
 
-    void SetIP(UIntNative ip) { Pc = ip; }
+    void SetIp(UIntNative ip) { Pc = ip; }
     void SetArg0Reg(UIntNative val) { R0 = val; }
     void SetArg1Reg(UIntNative val) { R1 = val; }
-    UIntNative GetIP() { return Pc; }
-    UIntNative GetLR() { return Lr; }
+    UIntNative GetIp() { return Pc; }
+    UIntNative GetLr() { return Lr; }
 } CONTEXT, *PCONTEXT;
 
 #elif defined(_X86_)
@@ -354,12 +375,12 @@ typedef struct _CONTEXT {
     UInt32 SegSs;
     UInt8  ExtendedRegisters[MAXIMUM_SUPPORTED_EXTENSION];
 
-    void SetIP(UIntNative ip) { Eip = ip; }
-    void SetSP(UIntNative sp) { Esp = sp; }
+    void SetIp(UIntNative ip) { Eip = ip; }
+    void SetSp(UIntNative sp) { Esp = sp; }
     void SetArg0Reg(UIntNative val) { Ecx = val; }
     void SetArg1Reg(UIntNative val) { Edx = val; }
-    UIntNative GetIP() { return Eip; }
-    UIntNative GetSP() { return Esp; }
+    UIntNative GetIp() { return Eip; }
+    UIntNative GetSp() { return Esp; }
 } CONTEXT, *PCONTEXT;
 #include "poppack.h"
 
@@ -436,11 +457,11 @@ typedef struct DECLSPEC_ALIGN(16) _CONTEXT {
     UInt32 Wcr[ARM64_MAX_WATCHPOINTS];
     UInt64 Wvr[ARM64_MAX_WATCHPOINTS];
 
-    void SetIP(UIntNative ip) { Pc = ip; }
+    void SetIp(UIntNative ip) { Pc = ip; }
     void SetArg0Reg(UIntNative val) { X0 = val; }
     void SetArg1Reg(UIntNative val) { X1 = val; }
-    UIntNative GetIP() { return Pc; }
-    UIntNative GetLR() { return Lr; }
+    UIntNative GetIp() { return Pc; }
+    UIntNative GetLr() { return Lr; }
 } CONTEXT, *PCONTEXT;
 
 #endif 
@@ -481,7 +502,11 @@ typedef enum _EXCEPTION_DISPOSITION {
 #define STATUS_STACK_OVERFLOW            ((UInt32   )0xC00000FDL)    
 #define STATUS_REDHAWK_NULL_REFERENCE    ((UInt32   )0x00000000L)    
 
+#ifdef PLATFORM_UNIX
+#define NULL_AREA_SIZE                   (4*1024)
+#else
 #define NULL_AREA_SIZE                   (64*1024)
+#endif
 
 #define GetExceptionCode            _exception_code
 #define GetExceptionInformation     (struct _EXCEPTION_POINTERS *)_exception_info
@@ -684,7 +709,7 @@ REDHAWK_PALIMPORT void REDHAWK_PALAPI PalGetModuleBounds(HANDLE hOsHandle, _Out_
 typedef struct _GUID GUID;
 REDHAWK_PALIMPORT void REDHAWK_PALAPI PalGetPDBInfo(HANDLE hOsHandle, _Out_ GUID * pGuidSignature, _Out_ UInt32 * pdwAge, _Out_writes_z_(cchPath) WCHAR * wszPath, Int32 cchPath);
 
-#ifndef APP_LOOCAL_RUNTIME
+#ifndef APP_LOCAL_RUNTIME
 REDHAWK_PALIMPORT bool REDHAWK_PALAPI PalGetThreadContext(HANDLE hThread, _Out_ PAL_LIMITED_CONTEXT * pCtx);
 #endif
 
@@ -698,7 +723,7 @@ REDHAWK_PALIMPORT UInt32 REDHAWK_PALAPI PalReadFileContents(_In_z_ const TCHAR *
 REDHAWK_PALIMPORT bool REDHAWK_PALAPI PalGetMaximumStackBounds(_Out_ void** ppStackLowOut, _Out_ void** ppStackHighOut);
 
 // Return value:  number of characters in name string
-REDHAWK_PALIMPORT Int32 PalGetModuleFileName(_Out_ wchar_t** pModuleNameOut, HANDLE moduleBase);
+REDHAWK_PALIMPORT Int32 PalGetModuleFileName(_Out_ const TCHAR** pModuleNameOut, HANDLE moduleBase);
 
 // Various intrinsic declarations needed for the PalGetCurrentTEB implementation below.
 #if defined(_X86_)
@@ -763,8 +788,15 @@ REDHAWK_PALIMPORT void REDHAWK_PALAPI PalTerminateCurrentProcess(UInt32 exitCode
 REDHAWK_PALIMPORT HANDLE REDHAWK_PALAPI PalGetModuleHandleFromPointer(_In_ void* pointer);
 
 #ifndef APP_LOCAL_RUNTIME
+
+#ifdef PLATFORM_UNIX
+REDHAWK_PALIMPORT void REDHAWK_PALAPI PalSetHardwareExceptionHandler(PHARDWARE_EXCEPTION_HANDLER handler);
+#else
 REDHAWK_PALIMPORT void* REDHAWK_PALAPI PalAddVectoredExceptionHandler(UInt32 firstHandler, _In_ PVECTORED_EXCEPTION_HANDLER vectoredHandler);
 #endif
+
+#endif
+
 
 typedef UInt32 (__stdcall *BackgroundCallback)(_In_opt_ void* pCallbackContext);
 REDHAWK_PALIMPORT bool REDHAWK_PALAPI PalStartBackgroundGCThread(_In_ BackgroundCallback callback, _In_opt_ void* pCallbackContext);
@@ -790,6 +822,8 @@ REDHAWK_PALIMPORT UInt32 REDHAWK_PALAPI PalCompatibleWaitAny(UInt32_BOOL alertab
 
 REDHAWK_PALIMPORT void REDHAWK_PALAPI PalAttachThread(void* thread);
 REDHAWK_PALIMPORT bool REDHAWK_PALAPI PalDetachThread(void* thread);
+
+REDHAWK_PALIMPORT UInt64 PalGetCurrentThreadIdForLogging();
 
 #ifdef PLATFORM_UNIX
 REDHAWK_PALIMPORT Int32 __cdecl _stricmp(const char *string1, const char *string2);

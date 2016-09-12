@@ -375,49 +375,49 @@ public:
     static void LogMsgOL(const char* format, T1 data1)
     {
         C_ASSERT(sizeof(T1) <= sizeof(void*)); 
-        LogMsg(LF_GC, 1, format, (void*)data1); 
+        LogMsg(LF_GC, 1, format, (void*)(size_t)data1); 
     }
 
     template < typename T1, typename T2 >
     static void LogMsgOL(const char* format, T1 data1, T2 data2)
     {
         C_ASSERT(sizeof(T1) <= sizeof(void*) && sizeof(T2) <= sizeof(void*)); 
-        LogMsg(LF_GC, 2, format, (void*)data1, (void*)data2); 
+        LogMsg(LF_GC, 2, format, (void*)(size_t)data1, (void*)(size_t)data2); 
     }
 
     template < typename T1, typename T2, typename T3 >
     static void LogMsgOL(const char* format, T1 data1, T2 data2, T3 data3)
     { 
         C_ASSERT(sizeof(T1) <= sizeof(void*) && sizeof(T2) <= sizeof(void*) && sizeof(T3) <= sizeof(void*)); 
-        LogMsg(LF_GC, 3, format, (void*)data1, (void*)data2, (void*)data3); 
+        LogMsg(LF_GC, 3, format, (void*)(size_t)data1, (void*)(size_t)data2, (void*)(size_t)data3); 
     }
 
     template < typename T1, typename T2, typename T3, typename T4 >
     static void LogMsgOL(const char* format, T1 data1, T2 data2, T3 data3, T4 data4)
     { 
         C_ASSERT(sizeof(T1) <= sizeof(void*) && sizeof(T2) <= sizeof(void*) && sizeof(T3) <= sizeof(void*) && sizeof(T4) <= sizeof(void*)); 
-        LogMsg(LF_GC, 4, format, (void*)data1, (void*)data2, (void*)data3, (void*)data4); 
+        LogMsg(LF_GC, 4, format, (void*)(size_t)data1, (void*)(size_t)data2, (void*)(size_t)data3, (void*)(size_t)data4); 
     }
 
     template < typename T1, typename T2, typename T3, typename T4, typename T5 >
     static void LogMsgOL(const char* format, T1 data1, T2 data2, T3 data3, T4 data4, T5 data5)
     { 
         C_ASSERT(sizeof(T1) <= sizeof(void*) && sizeof(T2) <= sizeof(void*) && sizeof(T3) <= sizeof(void*) && sizeof(T4) <= sizeof(void*) && sizeof(T5) <= sizeof(void*)); 
-        LogMsg(LF_GC, 5, format, (void*)data1, (void*)data2, (void*)data3, (void*)data4, (void*)data5); 
+        LogMsg(LF_GC, 5, format, (void*)(size_t)data1, (void*)(size_t)data2, (void*)(size_t)data3, (void*)(size_t)data4, (void*)(size_t)data5); 
     }
 
     template < typename T1, typename T2, typename T3, typename T4, typename T5, typename T6 >
     static void LogMsgOL(const char* format, T1 data1, T2 data2, T3 data3, T4 data4, T5 data5, T6 data6)
     { 
         C_ASSERT(sizeof(T1) <= sizeof(void*) && sizeof(T2) <= sizeof(void*) && sizeof(T3) <= sizeof(void*) && sizeof(T4) <= sizeof(void*) && sizeof(T5) <= sizeof(void*) && sizeof(T6) <= sizeof(void*)); 
-        LogMsg(LF_GC, 6, format, (void*)data1, (void*)data2, (void*)data3, (void*)data4, (void*)data5, (void*)data6); 
+        LogMsg(LF_GC, 6, format, (void*)(size_t)data1, (void*)(size_t)data2, (void*)(size_t)data3, (void*)(size_t)data4, (void*)(size_t)data5, (void*)(size_t)data6); 
     }
 
     template < typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7 >
     static void LogMsgOL(const char* format, T1 data1, T2 data2, T3 data3, T4 data4, T5 data5, T6 data6, T7 data7)
     { 
         C_ASSERT(sizeof(T1) <= sizeof(void*) && sizeof(T2) <= sizeof(void*) && sizeof(T3) <= sizeof(void*) && sizeof(T4) <= sizeof(void*) && sizeof(T5) <= sizeof(void*) && sizeof(T6) <= sizeof(void*) && sizeof(T7) <= sizeof(void*)); 
-        LogMsg(LF_GC, 7, format, (void*)data1, (void*)data2, (void*)data3, (void*)data4, (void*)data5, (void*)data6, (void*)data7); 
+        LogMsg(LF_GC, 7, format, (void*)(size_t)data1, (void*)(size_t)data2, (void*)(size_t)data3, (void*)(size_t)data4, (void*)(size_t)data5, (void*)(size_t)data6, (void*)(size_t)data7); 
     }
 
     #ifdef _MSC_VER
@@ -548,12 +548,12 @@ struct StressLogChunk
 //     to the corresponding field
 class ThreadStressLog {
     PTR_ThreadStressLog next;   // we keep a linked list of these
-    unsigned   threadId;        // the id for the thread using this buffer
+    uint64_t   threadId;        // the id for the thread using this buffer
     bool       isDead;          // Is this thread dead 
-    StressMsg* curPtr;          // where packets are being put on the queue
-    StressMsg* readPtr;         // where we are reading off the queue (used during dumping)
     bool       readHasWrapped;      // set when read ptr has passed chunListTail
     bool       writeHasWrapped;     // set when write ptr has passed chunListHead
+    StressMsg* curPtr;          // where packets are being put on the queue
+    StressMsg* readPtr;         // where we are reading off the queue (used during dumping)
     PTR_StressLogChunk chunkListHead; //head of a list of stress log chunks
     PTR_StressLogChunk chunkListTail; //tail of a list of stress log chunks
     PTR_StressLogChunk curReadChunk;  //the stress log chunk we are currently reading
@@ -715,7 +715,6 @@ inline ThreadStressLog::ThreadStressLog()
     chunkListHead = chunkListTail = newChunk;
 
     next = NULL;
-    threadId = 0;
     isDead = TRUE;
     curPtr = NULL;
     readPtr = NULL;

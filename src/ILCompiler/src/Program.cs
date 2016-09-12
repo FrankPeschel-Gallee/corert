@@ -6,6 +6,7 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Reflection;
+using System.CommandLine;
 using System.Runtime.InteropServices;
 
 using Internal.TypeSystem;
@@ -27,13 +28,15 @@ namespace ILCompiler
         {
         }
 
-        private void Help()
+        private void Help(string helpText)
         {
-            Console.WriteLine("ILCompiler compiler version " + typeof(Program).GetTypeInfo().Assembly.GetName().Version.ToString());
             Console.WriteLine();
-            Console.WriteLine("-help        Display this usage message (Short form: -?)");
-            Console.WriteLine("-out         Specify output file name");
-            Console.WriteLine("-reference   Reference metadata from the specified assembly (Short form: -r)");
+            Console.Write("Microsoft (R) .NET Native IL Compiler");
+            Console.Write(" ");
+            Console.Write(typeof(Program).GetTypeInfo().Assembly.GetName().Version);
+            Console.WriteLine();
+            Console.WriteLine();
+            Console.WriteLine(helpText);
         }
 
         private void InitializeDefaultOptions()
@@ -56,91 +59,73 @@ namespace ILCompiler
                 _options.TargetOS = TargetOS.OSX;
             else
                 throw new NotImplementedException();
+
+            switch (RuntimeInformation.ProcessArchitecture)
+            {
+            case Architecture.X86:
+                _options.TargetArchitecture = TargetArchitecture.X86;
+                break;
+            case Architecture.X64:
+                _options.TargetArchitecture = TargetArchitecture.X64;
+                break;
+            case Architecture.Arm:
+                _options.TargetArchitecture = TargetArchitecture.ARM;
+                break;
+            case Architecture.Arm64:
+                _options.TargetArchitecture = TargetArchitecture.ARM64;
+                break;
+            default:
+                throw new NotImplementedException();
+            }
 #else
             _options.TargetOS = TargetOS.Windows;
-#endif
-
             _options.TargetArchitecture = TargetArchitecture.X64;
+#endif
         }
 
-        // TODO: Use System.CommandLine for command line parsing
-        // https://github.com/dotnet/corert/issues/568
-        private void ParseCommandLine(string[] args)
+        private ArgumentSyntax ParseCommandLine(string[] args)
         {
-            var parser = new CommandLineParser(args);
+            IReadOnlyList<string> inputFiles = Array.Empty<string>();
+            IReadOnlyList<string> referenceFiles = Array.Empty<string>();
 
-            string option;
-            while ((option = parser.GetOption()) != null)
+            AssemblyName name = typeof(Program).GetTypeInfo().Assembly.GetName();
+            ArgumentSyntax argSyntax = ArgumentSyntax.Parse(args, syntax =>
             {
-                switch (option.ToLowerInvariant())
-                {
-                    case "?":
-                    case "help":
-                        _help = true;
-                        break;
+                syntax.ApplicationName = name.Name.ToString();
 
-                    case "":
-                    case "in":
-                        parser.AppendExpandedPaths(_inputFilePaths, true);
-                        break;
+                // HandleHelp writes to error, fails fast with crash dialog and lacks custom formatting.
+                syntax.HandleHelp = false;
+                syntax.HandleErrors = true;
 
-                    case "o":
-                    case "out":
-                        _options.OutputFilePath = parser.GetStringValue();
-                        break;
+                syntax.DefineOption("h|help", ref _help, "Help message for ILC");
+                syntax.DefineOptionList("r|reference", ref referenceFiles, "Reference file(s) for compilation");
+                syntax.DefineOption("o|out", ref _options.OutputFilePath, "Output file path");
+                syntax.DefineOption("cpp", ref _options.IsCppCodeGen, "Compile for C++ code-generation");
+                syntax.DefineOption("nolinenumbers", ref _options.NoLineNumbers, "Debug line numbers for C++ code-generation");
+                syntax.DefineOption("dgmllog", ref _options.DgmlLog, "Save result of dependency analysis as DGML");
+                syntax.DefineOption("fulllog", ref _options.FullLog, "Save detailed log of dependency analysis");
+                syntax.DefineOption("verbose", ref _options.Verbose, "Enable verbose logging");
+                syntax.DefineOption("systemmodule", ref _options.SystemModuleName, "System module name (default: System.Private.CoreLib)");
+                syntax.DefineOption("multifile", ref _options.MultiFile, "Compile only input files (do not compile referenced assemblies)");
+                syntax.DefineParameterList("in", ref inputFiles, "Input file(s) to compile");
+            });
+            foreach (var input in inputFiles)
+                Helpers.AppendExpandedPaths(_inputFilePaths, input, true);
 
-                    case "dgmllog":
-                        _options.DgmlLog = parser.GetStringValue();
-                        break;
+            foreach (var reference in referenceFiles)
+                Helpers.AppendExpandedPaths(_referenceFilePaths, reference, false);
 
-                    case "fulllog":
-                        _options.FullLog = true;
-                        break;
-
-                    case "verbose":
-                        _options.Verbose = true;
-                        break;
-
-                    case "r":
-                    case "reference":
-                        parser.AppendExpandedPaths(_referenceFilePaths, false);
-                        break;
-
-                    case "cpp":
-                        _options.IsCppCodeGen = true;
-                        break;
-
-                    case "nolinenumbers":
-                        _options.NoLineNumbers = true;
-                        break;
-
-                    case "systemmodule":
-                        _options.SystemModuleName = parser.GetStringValue();
-                        break;
-
-                    default:
-                        throw new CommandLineException("Unrecognized option: " + parser.GetCurrentOption());
-                }
-            }
-        }
-
-        private void SingleFileCompilation()
-        {
-            Compilation compilation = new Compilation(_options);
-            compilation.Log = _options.Verbose ? Console.Out : TextWriter.Null;
-
-            compilation.CompileSingleFile();
+            return argSyntax;
         }
 
         private int Run(string[] args)
         {
             InitializeDefaultOptions();
 
-            ParseCommandLine(args);
-
+            ArgumentSyntax syntax = ParseCommandLine(args);
             if (_help)
             {
-                Help();
+                Help(syntax.GetHelpText());
                 return 1;
             }
 
@@ -150,9 +135,9 @@ namespace ILCompiler
             if (_options.OutputFilePath == null)
                 throw new CommandLineException("Output filename must be specified (/out <file>)");
 
-            // For now, we can do single file compilation only
-            // TODO: Multifile
-            SingleFileCompilation();
+            Compilation compilation = new Compilation(_options);
+            compilation.Log = _options.Verbose ? Console.Out : TextWriter.Null;
+            compilation.Compile();
 
             return 0;
         }
@@ -169,6 +154,7 @@ namespace ILCompiler
             catch (Exception e)
             {
                 Console.Error.WriteLine("Error: " + e.Message);
+                Console.Error.WriteLine(e.ToString());
                 return 1;
             }
 #endif

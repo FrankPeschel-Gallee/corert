@@ -43,11 +43,12 @@ __tls_array     equ 2Ch     ;; offsetof(TEB, ThreadLocalStoragePointer)
 INLINE_GETTHREAD macro destReg, trashReg
     ASSUME fs : NOTHING
     EXTERN __tls_index : DWORD
+    EXTERN _tls_CurrentThread : DWORD
 
     mov         destReg, [__tls_index]
     mov         trashReg, fs:[__tls_array]
     mov         destReg, [trashReg + destReg * 4]
-    add         destReg, OFFSETOF__TLS__tls_CurrentThread
+    add         destReg, SECTIONREL _tls_CurrentThread
 endm
 
 
@@ -77,8 +78,7 @@ endm
 ;; interesting GC references. In all our helper cases this corresponds to the most recent managed frame (e.g.
 ;; the helper's caller).
 ;;
-;; This macro builds a frame describing the current state of managed code and stashes a pointer to this frame
-;; on the current thread, ready to be used if and when the helper needs to transition to pre-emptive mode.
+;; This macro builds a frame describing the current state of managed code.
 ;;
 ;; The macro assumes it is called from a helper that has already set up an EBP frame and that the values of
 ;; EBX, ESI and EDI remain unchanged from their values in managed code. It pushes the frame at the top of the
@@ -86,21 +86,20 @@ endm
 ;;
 ;; EAX is trashed by this macro.
 ;;
-PUSH_COOP_PINVOKE_FRAME macro threadReg
+PUSH_COOP_PINVOKE_FRAME macro transitionFrameReg
     lea         eax, [ebp + 8]                      ; get the ESP of the caller
     push        eax                                 ; save ESP
     push        edi
     push        esi
     push        ebx
     push        PTFF_SAVE_ALL_PRESERVED + PTFF_SAVE_RSP
-    push        threadReg                           ; Thread * (unused by stackwalker)
+    push        eax                                 ; Thread * (unused by stackwalker)
     mov         eax, [ebp + 0]                      ; Find previous EBP value
     push        eax                                 ; save EBP
     mov         eax, [ebp + 4]                      ; Find the return address
     push        eax                                 ; save m_RIP
 
-    lea         eax, [esp + 0]                      ; EAX == address of frame
-    mov         [threadReg + OFFSETOF__Thread__m_pHackPInvokeTunnel], eax ; Link frame to thread
+    lea         transitionFrameReg, [esp + 0]       ; transitionFrameReg == address of frame
 endm
 
 ;;
@@ -110,11 +109,6 @@ endm
 ;; TRASHES ECX
 ;;
 POP_COOP_PINVOKE_FRAME macro
-    ;; We do not need to clear m_pHackPInvokeTunnel here because it is 'on the side' information.
-    ;; The actual transition to/from preemptive mode is done elsewhere (HackEnablePreemptiveMode,
-    ;; HackDisablePreemptiveMode) and m_pHackPInvokeTunnel need only be valid when that happens,
-    ;; so as long as we always set it on the way into a "cooperative pinvoke" method, we're fine
-    ;; because it is only looked at inside these "cooperative pinvoke" methods.
     add         esp, 4*4
     pop         ebx
     pop         esi
@@ -129,9 +123,6 @@ endm
 TSF_Attached                    equ 01h
 TSF_SuppressGcStress            equ 08h
 TSF_DoNotTriggerGc              equ 10h
-
-;; Slot number of the Finalize virtual method.
-METHOD_SLOT_Finalize            equ 0
 
 ;; GC type flags
 GC_ALLOC_FINALIZE               equ 1
@@ -154,11 +145,6 @@ PTFF_RAX_IS_BYREF       equ 00020000h   ;; iff PTFF_SAVE_RAX: set -> eax is ByRe
 MANAGED_CALLOUT_THUNK_TRANSITION_FRAME_POINTER_OFFSET equ -4
 
 ;;
-;; This constant, unfortunately, cannot be validated at build time.
-;;
-OFFSETOF__TLS__tls_CurrentThread                    equ  8h
-
-;;
 ;; Rename fields of nested structs
 ;;
 OFFSETOF__Thread__m_alloc_context__alloc_ptr        equ OFFSETOF__Thread__m_rgbAllocContextBuffer + OFFSETOF__alloc_context__alloc_ptr
@@ -169,16 +155,15 @@ OFFSETOF__Thread__m_alloc_context__alloc_limit      equ OFFSETOF__Thread__m_rgbA
 ;;
 
 PALDEBUGBREAK                               equ ?PalDebugBreak@@YGXXZ
-REDHAWKGCINTERFACE__ALLOC                   equ ?Alloc@RedhawkGCInterface@@SGPAXPAVThread@@IIPAVEEType@@@Z
-REDHAWKGCINTERFACE__GARBAGECOLLECT          equ ?GarbageCollect@RedhawkGCInterface@@SGXII@Z
+RhpGcAlloc                                  equ @RhpGcAlloc@16
 G_LOWEST_ADDRESS                            equ _g_lowest_address
 G_HIGHEST_ADDRESS                           equ _g_highest_address
 G_EPHEMERAL_LOW                             equ _g_ephemeral_low
 G_EPHEMERAL_HIGH                            equ _g_ephemeral_high
 G_CARD_TABLE                                equ _g_card_table
-THREADSTORE__ATTACHCURRENTTHREAD            equ ?AttachCurrentThread@ThreadStore@@SGXXZ
-RhpPInvokeWaitEx                            equ @RhpPInvokeWaitEx@4
-RhpPInvokeReturnWaitEx                      equ @RhpPInvokeReturnWaitEx@4
+RhpWaitForSuspend2                          equ @RhpWaitForSuspend2@0
+RhpWaitForGC2                               equ @RhpWaitForGC2@4
+RhpReversePInvokeAttachOrTrapThread2        equ @RhpReversePInvokeAttachOrTrapThread2@4
 RhpTrapThreads                              equ _RhpTrapThreads
 RhpPublishObject                            equ @RhpPublishObject@8
 
@@ -190,12 +175,11 @@ endif ;; FEATURE_GC_STRESS
 ;;
 ;; IMPORTS
 ;;
-EXTERN REDHAWKGCINTERFACE__ALLOC                : PROC
-EXTERN REDHAWKGCINTERFACE__GARBAGECOLLECT       : PROC
-EXTERN THREADSTORE__ATTACHCURRENTTHREAD         : PROC
+EXTERN RhpGcAlloc                               : PROC
 EXTERN PALDEBUGBREAK                            : PROC
-EXTERN RhpPInvokeWaitEx                         : PROC
-EXTERN RhpPInvokeReturnWaitEx                   : PROC
+EXTERN RhpWaitForSuspend2                       : PROC
+EXTERN RhpWaitForGC2                            : PROC
+EXTERN RhpReversePInvokeAttachOrTrapThread2     : PROC
 EXTERN RhExceptionHandling_FailedAllocation     : PROC
 EXTERN RhpPublishObject                         : PROC
 EXTERN RhpCalculateStackTraceWorker             : PROC

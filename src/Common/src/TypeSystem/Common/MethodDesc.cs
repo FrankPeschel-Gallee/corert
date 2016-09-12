@@ -13,8 +13,14 @@ namespace Internal.TypeSystem
     public enum MethodSignatureFlags
     {
         None = 0x0000,
-        Static = 0x0001,
         // TODO: Generic, etc.
+
+        UnmanagedCallingConventionMask       = 0x000F,
+        UnmanagedCallingConventionCdecl      = 0x0001,
+        UnmanagedCallingConventionStdCall    = 0x0002,
+        UnmanagedCallingConventionThisCall   = 0x0003,
+
+        Static = 0x0010,
     }
 
     public sealed class MethodSignature
@@ -192,6 +198,8 @@ namespace Internal.TypeSystem
         private int _hashcode;
 
         /// <summary>
+        /// Allows a performance optimization that skips the potentially expensive
+        /// construction of a hash code if a hash code has already been computed elsewhere.
         /// Use to allow objects to have their hashcode computed
         /// independently of the allocation of a MethodDesc object
         /// For instance, compute the hashcode when looking up the object,
@@ -199,7 +207,7 @@ namespace Internal.TypeSystem
         /// The hashcode specified MUST exactly match the algorithm implemented
         /// on this type normally.
         /// </summary>
-        public void SetHashCode(int hashcode)
+        protected void SetHashCode(int hashcode)
         {
             _hashcode = hashcode;
             Debug.Assert(hashcode == ComputeHashCode());
@@ -229,6 +237,8 @@ namespace Internal.TypeSystem
 
         public override bool Equals(Object o)
         {
+            // Its only valid to compare two MethodDescs in the same context
+            Debug.Assert(Object.ReferenceEquals(o, null) || !(o is MethodDesc) || Object.ReferenceEquals(((MethodDesc)o).Context, this.Context));
             return Object.ReferenceEquals(this, o);
         }
 
@@ -372,14 +382,7 @@ namespace Internal.TypeSystem
 
         public virtual MethodDesc InstantiateSignature(Instantiation typeInstantiation, Instantiation methodInstantiation)
         {
-            MethodDesc method = this;
-
-            TypeDesc owningType = method.OwningType;
-            TypeDesc instantiatedOwningType = owningType.InstantiateSignature(typeInstantiation, methodInstantiation);
-            if (owningType != instantiatedOwningType)
-                method = instantiatedOwningType.Context.GetMethodForInstantiatedType(method.GetTypicalMethodDefinition(), (InstantiatedType)instantiatedOwningType);
-
-            Instantiation instantiation = method.Instantiation;
+            Instantiation instantiation = Instantiation;
             TypeDesc[] clone = null;
 
             for (int i = 0; i < instantiation.Length; i++)
@@ -400,7 +403,18 @@ namespace Internal.TypeSystem
                 }
             }
 
-            return (clone == null) ? method : method.Context.GetInstantiatedMethod(method.GetMethodDefinition(), new Instantiation(clone));
+            MethodDesc method = this;
+
+            TypeDesc owningType = method.OwningType;
+            TypeDesc instantiatedOwningType = owningType.InstantiateSignature(typeInstantiation, methodInstantiation);
+            if (owningType != instantiatedOwningType)
+            {
+                method = Context.GetMethodForInstantiatedType(method.GetTypicalMethodDefinition(), (InstantiatedType)instantiatedOwningType);
+                if (clone == null && instantiation.Length != 0)
+                    return Context.GetInstantiatedMethod(method, instantiation);
+            }
+
+            return (clone == null) ? method : Context.GetInstantiatedMethod(method.GetMethodDefinition(), new Instantiation(clone));
         }
     }
 }

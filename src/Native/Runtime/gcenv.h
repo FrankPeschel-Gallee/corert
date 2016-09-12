@@ -29,16 +29,13 @@
 #include "gcrhinterface.h"
 #include "gcenv.interlocked.inl"
 
+#include "stressLog.h"
 #ifdef FEATURE_ETW
 
-    // @TODO: ETW update required -- placeholders
-    #define FireEtwGCPerHeapHistory_V3(ClrInstanceID, FreeListAllocated, FreeListRejected, EndOfSegAllocated, CondemnedAllocated, PinnedAllocated, PinnedAllocatedAdvance, RunningFreeListEfficiency, CondemnReasons0, CondemnReasons1, CompactMechanisms, ExpandMechanisms, HeapIndex, ExtraGen0Commit, Count, Values_Len_, Values) 0
-    #define FireEtwGCGlobalHeapHistory_V2(FinalYoungestDesired, NumHeaps, CondemnedGeneration, Gen0ReductionCount, Reason, GlobalMechanisms, ClrInstanceID, PauseMode, MemoryPressure) 0
-    #define FireEtwGCMarkWithType(HeapNum, ClrInstanceID, Type, Bytes) {HeapNum;ClrInstanceID;Type;Bytes;}
-    #define FireEtwPinPlugAtGCTime(PlugStart, PlugEnd, GapBeforeSize, ClrInstanceID) 0
-    #define FireEtwGCTriggered(Reason, ClrInstanceID) 0
-
     #ifndef _INC_WINDOWS
+        typedef void* LPVOID;
+        typedef uint32_t UINT;
+        typedef void* PVOID;
         typedef uint64_t ULONGLONG;
         typedef uint32_t ULONG;
         typedef int64_t LONGLONG;
@@ -57,6 +54,7 @@
 #endif // FEATURE_ETW
 
 #define MAX_LONGPATH 1024
+#define LOG(x)
 
 #ifndef YieldProcessor
 #define YieldProcessor PalYieldProcessor
@@ -171,7 +169,13 @@ public:
     int     GetGCtraceFac  ()               const { return 0; }
     int     GetGCprnLvl    ()               const { return 0; }
     bool    IsGCBreakOnOOMEnabled()         const { return false; }
+#ifdef USE_PORTABLE_HELPERS
+    // CORERT-TODO: remove this
+    //              https://github.com/dotnet/corert/issues/913
+    int     GetGCgen0size  ()               const { return 100 * 1024 * 1024; }
+#else
     int     GetGCgen0size  ()               const { return 0; }
+#endif
     void    SetGCgen0size  (int iSize)            { UNREFERENCED_PARAMETER(iSize); }
     int     GetSegmentSize ()               const { return 0; }
     void    SetSegmentSize (int iSize)            { UNREFERENCED_PARAMETER(iSize); }
@@ -214,29 +218,14 @@ public:
         UNREFERENCED_PARAMETER(max_gen);
     }
     void VerifySyncTableEntry() {}
+
+    DWORD GetActiveCount()
+    {
+        return 0;
+    }
 };
 
 #endif // VERIFY_HEAP
-
-//
-// -----------------------------------------------------------------------------------------------------------
-//
-// Support for shutdown finalization, which is off by default but can be enabled by the class library.
-//
-
-// If true runtime shutdown will attempt to finalize all finalizable objects (even those still rooted).
-extern bool g_fPerformShutdownFinalization;
-
-// Time to wait (in milliseconds) for the above finalization to complete before giving up and proceeding with
-// shutdown. Can specify INFINITE for no timeout. 
-extern UInt32 g_uiShutdownFinalizationTimeout;
-
-// Flag set to true once we've begun shutdown (and before shutdown finalization begins). This is exported to
-// the class library so that managed code can tell when it is safe to access other objects from finalizers.
-extern bool g_fShutdownHasStarted;
-
-
-
 
 EXTERN_C UInt32 _tls_index;
 inline UInt16 GetClrInstanceId()
@@ -249,3 +238,9 @@ typedef DPTR(GCHeap) PTR_GCHeap;
 typedef DPTR(uint32_t) PTR_uint32_t;
 
 enum CLRDataEnumMemoryFlags : int;
+
+#if defined(ENABLE_PERF_COUNTERS) || defined(FEATURE_EVENT_TRACE)
+// Note this is not updated in a thread safe way so the value may not be accurate. We get
+// it accurately in full GCs if the handle count is requested.
+extern DWORD g_dwHandles;
+#endif // ENABLE_PERF_COUNTERS || FEATURE_EVENT_TRACE

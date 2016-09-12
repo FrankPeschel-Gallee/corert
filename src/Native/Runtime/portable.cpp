@@ -10,7 +10,7 @@
 #include "CommonMacros.inl"
 #include "Volatile.h"
 #include "PalRedhawk.h"
-#include "assert.h"
+#include "rhassert.h"
 
 #include "slist.h"
 #include "gcrhinterface.h"
@@ -27,6 +27,7 @@
 #include "StackFrameIterator.h"
 #include "thread.h"
 #include "threadstore.h"
+#include "threadstore.inl"
 
 #include "eetype.h"
 #include "ObjectLayout.h"
@@ -34,6 +35,9 @@
 #include "GCMemoryHelpers.h"
 #include "GCMemoryHelpers.inl"
 
+#ifdef USE_PORTABLE_HELPERS
+
+EXTERN_C REDHAWK_API void* REDHAWK_CALLCONV RhpGcAlloc(EEType *pEEType, UInt32 uFlags, UIntNative cbSize, void * pTransitionFrame);
 EXTERN_C REDHAWK_API void* REDHAWK_CALLCONV RhpPublishObject(void* pObject, UIntNative cbSize);
 
 #if defined(FEATURE_SVR_GC)
@@ -54,24 +58,6 @@ struct alloc_context
 #endif // defined(FEATURE_SVR_GC)
     int            alloc_count;
 };
-
-//
-// PInvoke
-//
-COOP_PINVOKE_HELPER(void, RhpReversePInvoke2, (ReversePInvokeFrame* pFrame))
-{
-    Thread* pCurThread = ThreadStore::RawGetCurrentThread();
-    pFrame->m_savedThread = pCurThread;
-    if (pCurThread->TryFastReversePInvoke(pFrame))
-        return;
-
-    pCurThread->ReversePInvoke(pFrame);
-}
-
-COOP_PINVOKE_HELPER(void, RhpReversePInvokeReturn, (ReversePInvokeFrame* pFrame))
-{
-    pFrame->m_savedThread->ReversePInvokeReturn(pFrame);
-}
 
 //
 // Allocations
@@ -97,7 +83,7 @@ COOP_PINVOKE_HELPER(Object *, RhpNewFast, (EEType* pEEType))
         return pObject;
     }
 
-    pObject = (Object *)RedhawkGCInterface::Alloc(pCurThread, size, 0, pEEType);
+    pObject = (Object *)RhpGcAlloc(pEEType, 0, size, NULL);
     if (pObject == nullptr)
     {
         ASSERT_UNCONDITIONALLY("NYI");  // TODO: Throw OOM
@@ -117,12 +103,9 @@ COOP_PINVOKE_HELPER(Object *, RhpNewFinalizable, (EEType* pEEType))
     ASSERT(!pEEType->RequiresAlign8());
     ASSERT(pEEType->HasFinalizer());
 
-    Thread * pCurThread = ThreadStore::GetCurrentThread();
-    Object * pObject;
-
     size_t size = pEEType->get_BaseSize();
 
-    pObject = (Object *)RedhawkGCInterface::Alloc(pCurThread, size, GC_ALLOC_FINALIZE, pEEType);
+    Object * pObject = (Object *)RhpGcAlloc(pEEType, GC_ALLOC_FINALIZE, size, NULL);
     if (pObject == nullptr)
     {
         ASSERT_UNCONDITIONALLY("NYI");  // TODO: Throw OOM
@@ -156,7 +139,7 @@ COOP_PINVOKE_HELPER(Array *, RhpNewArray, (EEType * pArrayEEType, int numElement
     {
         // Perform the size computation using 64-bit integeres to detect overflow
         uint64_t size64 = (uint64_t)pArrayEEType->get_BaseSize() + ((uint64_t)numElements * (uint64_t)pArrayEEType->get_ComponentSize());
-        size64 = ALIGN_UP(size, sizeof(UIntNative));
+        size64 = (size64 + (sizeof(UIntNative)-1)) & ~(sizeof(UIntNative)-1);
 
         size = (size_t)size64;
         if (size != size64)
@@ -182,7 +165,7 @@ COOP_PINVOKE_HELPER(Array *, RhpNewArray, (EEType * pArrayEEType, int numElement
         return pObject;
     }
 
-    pObject = (Array *)RedhawkGCInterface::Alloc(pCurThread, size, 0, pArrayEEType);
+    pObject = (Array *)RhpGcAlloc(pArrayEEType, 0, size, NULL);
     if (pObject == nullptr)
     {
         ASSERT_UNCONDITIONALLY("NYI");  // TODO: Throw OOM
@@ -196,64 +179,19 @@ COOP_PINVOKE_HELPER(Array *, RhpNewArray, (EEType * pArrayEEType, int numElement
     return pObject;
 }
 
-COOP_PINVOKE_HELPER(MDArray *, RhNewMDArray, (EEType * pArrayEEType, UInt32 rank, ...))
+//
+// PInvoke
+//
+COOP_PINVOKE_HELPER(void, RhpPInvoke, (void* pFrame))
 {
-    ASSERT_MSG(!pArrayEEType->RequiresAlign8(), "NYI");
-
-    Thread * pCurThread = ThreadStore::GetCurrentThread();
-    alloc_context * acontext = pCurThread->GetAllocContext();
-    MDArray * pObject;
-
-    va_list argp;
-    va_start(argp, rank);
-
-    int numElements = va_arg(argp, int);
-
-    for (UInt32 i = 1; i < rank; i++)
-    {
-        // TODO: Overflow checks
-        numElements *= va_arg(argp, Int32);
-    }
-
-    // TODO: Overflow checks
-    size_t size = 3 * sizeof(UIntNative) + 2 * rank * sizeof(Int32) + (numElements * pArrayEEType->get_ComponentSize());
-    // Align up
-    size = (size + (sizeof(UIntNative) - 1)) & ~(sizeof(UIntNative) - 1);
-
-    UInt8* result = acontext->alloc_ptr;
-    UInt8* advance = result + size;
-    bool needsPublish = false;
-    if (advance <= acontext->alloc_limit)
-    {
-        acontext->alloc_ptr = advance;
-        pObject = (MDArray *)result;
-    }
-    else
-    {
-        needsPublish = true;
-        pObject = (MDArray *)RedhawkGCInterface::Alloc(pCurThread, size, 0, pArrayEEType);
-        if (pObject == nullptr)
-        {
-            ASSERT_UNCONDITIONALLY("NYI");  // TODO: Throw OOM
-        }
-    }
-
-    pObject->set_EEType(pArrayEEType);
-    pObject->InitMDArrayLength((UInt32)numElements);
-
-    va_start(argp, rank);
-    for (UInt32 i = 0; i < rank; i++)
-    {
-        pObject->InitMDArrayDimension(i, va_arg(argp, UInt32));
-    }
-
-    if (needsPublish && size >= RH_LARGE_OBJECT_SIZE)
-        RhpPublishObject(pObject, size);
-
-    return pObject;
+    // TODO: RhpPInvoke
 }
 
-#if defined(USE_PORTABLE_HELPERS)
+COOP_PINVOKE_HELPER(void, RhpPInvokeReturn, (void* pFrame))
+{
+    // TODO: RhpPInvokeReturn
+}
+
 COOP_PINVOKE_HELPER(void, RhpInitialDynamicInterfaceDispatch, ())
 {
     ASSERT_UNCONDITIONALLY("NYI");
@@ -293,24 +231,22 @@ COOP_PINVOKE_HELPER(void, RhpInterfaceDispatch64, ())
 {
     ASSERT_UNCONDITIONALLY("NYI");
 }
-#endif
 
-#if defined(USE_PORTABLE_HELPERS) || !defined(_WIN32)
 typedef UIntTarget (*TargetFunc2)(UIntTarget, UIntTarget);
 COOP_PINVOKE_HELPER(UIntTarget, ManagedCallout2, (UIntTarget argument1, UIntTarget argument2, void *pTargetMethod, void *pPreviousManagedFrame))
 {
-    // @TODO Implement ManagedCallout2 on Unix
-    // https://github.com/dotnet/corert/issues/685
     TargetFunc2 target = (TargetFunc2)pTargetMethod;
     return (*target)(argument1, argument2);
 }
-#endif
+#endif // USE_PORTABLE_HELPERS
 
-// finalizer.cs
-COOP_PINVOKE_HELPER(void, ProcessFinalizers, ())
-{
-    ASSERT_UNCONDITIONALLY("NYI");
-}
+// @TODO Implement UniversalTransition
+EXTERN_C void * ReturnFromUniversalTransition;
+void * ReturnFromUniversalTransition;
+
+// @TODO Implement CallDescrThunk
+EXTERN_C void * ReturnFromCallDescrThunk;
+void * ReturnFromCallDescrThunk;
 
 // 
 // Return address hijacking
@@ -389,4 +325,35 @@ COOP_PINVOKE_HELPER(Int64, RhpLockCmpXchg64, (Int64 * location, Int64 value, Int
 COOP_PINVOKE_HELPER(void, RhpMemoryBarrier, ())
 {
     PalMemoryBarrier();
+}
+
+COOP_PINVOKE_HELPER(void, Native_GetThunksBase, ())
+{
+    ASSERT_UNCONDITIONALLY("NYI");
+}
+
+COOP_PINVOKE_HELPER(void, Native_GetNumThunksPerMapping, ())
+{
+    ASSERT_UNCONDITIONALLY("NYI");
+}
+
+COOP_PINVOKE_HELPER(void, Native_GetThunkSize, ())
+{
+    ASSERT_UNCONDITIONALLY("NYI");
+}
+
+COOP_PINVOKE_HELPER(void, RhCallDescrWorker, (void * callDescr))
+{
+    ASSERT_UNCONDITIONALLY("NYI");
+}
+
+COOP_PINVOKE_HELPER(void, RhpETWLogLiveCom, (Int32 eventType, void * ccwHandle, void * objectId, void * typeRawValue, void * iUnknown, void * vTable, Int32 comRefCount, Int32 jupiterRefCount, Int32 flags))
+{
+    ASSERT_UNCONDITIONALLY("NYI");
+}
+
+COOP_PINVOKE_HELPER(bool, RhpETWShouldWalkCom, ())
+{
+    ASSERT_UNCONDITIONALLY("NYI");
+    return false;
 }

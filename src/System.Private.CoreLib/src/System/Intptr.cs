@@ -24,6 +24,10 @@ namespace System
 
     public struct IntPtr
     {
+        // WARNING: We allow diagnostic tools to directly inspect this member (_value). 
+        // See https://github.com/dotnet/corert/blob/master/Documentation/design-docs/diagnostics/diagnostics-tools-contract.md for more details. 
+        // Please do not change the type, the name, or the semantic usage of this member without understanding the implication for tools. 
+        // Get in touch with the diagnostics team if you have questions.
         unsafe private void* _value; // The compiler treats void* closest to uint hence explicit casts are required to preserve int behavior
 
         [Intrinsic]
@@ -53,7 +57,6 @@ namespace System
 
         [CLSCompliant(false)]
         [Intrinsic]
-        [SecurityCritical] // required to match contract
         [NonVersionable]
         public unsafe IntPtr(void* value)
         {
@@ -107,7 +110,6 @@ namespace System
 
         [CLSCompliant(false)]
         [Intrinsic]
-        [SecurityCritical] // required to match contract
         [NonVersionable]
         public unsafe static explicit operator IntPtr(void* value)
         {
@@ -241,8 +243,12 @@ namespace System
 
         public unsafe override int GetHashCode()
         {
-            // QUESTION: This HashCode seems to neglect the high order bits in calculating the hashcode?
-            return unchecked((int)((long)_value));
+#if BIT64
+            long l = (long)_value;
+            return (unchecked((int)l) ^ (int)(l >> 32));
+#else
+            return unchecked((int)_value);
+#endif
         }
     }
 }

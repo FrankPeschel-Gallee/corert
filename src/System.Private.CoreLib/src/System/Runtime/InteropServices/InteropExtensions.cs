@@ -98,8 +98,8 @@ namespace System.Runtime.InteropServices
 
         public static bool IsGenericType(this RuntimeTypeHandle handle)
         {
-            return handle.Classification == RuntimeImports.RhEETypeClassification.Generic ||
-                   handle.Classification == RuntimeImports.RhEETypeClassification.GenericTypeDefinition;
+            EETypePtr eeType = handle.ToEETypePtr();
+            return eeType.IsGeneric || eeType.IsGenericTypeDefinition;
         }
 
         public static TKey FindEquivalentKeyUnsafe<TKey, TValue>(
@@ -149,6 +149,26 @@ namespace System.Runtime.InteropServices
             return del.GetFunctionPointer(out typeOfFirstParameterIfInstanceDelegate, out dummyIsOpenInstanceFunction);
         }
 
+        //
+        // Returns the raw function pointer for a open static delegate - if the function has a jump stub 
+        // it returns the jump target. Therefore the function pointer returned
+        // by two delegates may NOT be unique
+        //
+        public static IntPtr GetRawFunctionPointerForOpenStaticDelegate(this Delegate del)
+        {
+            //If it is not open static then return IntPtr.Zero
+            if (!del.IsOpenStatic)
+                return IntPtr.Zero;
+
+            bool dummyIsOpenInstanceFunction;
+            RuntimeTypeHandle typeOfFirstParameterIfInstanceDelegate;
+
+            IntPtr funcPtr = del.GetFunctionPointer(out typeOfFirstParameterIfInstanceDelegate, out dummyIsOpenInstanceFunction);
+
+            // if the function pointer points to a jump stub return the target
+            return RuntimeImports.RhGetJmpStubCodeTarget(funcPtr);
+        }
+
         public static IntPtr GetRawValue(this RuntimeTypeHandle handle)
         {
             return handle.RawValue;
@@ -196,7 +216,7 @@ namespace System.Runtime.InteropServices
 
         public static bool IsInterface(this RuntimeTypeHandle handle)
         {
-            return RuntimeImports.RhIsInterface(handle.ToEETypePtr());
+            return handle.ToEETypePtr().IsInterface;
         }
 
         public static bool AreTypesAssignable(RuntimeTypeHandle sourceType, RuntimeTypeHandle targetType)
@@ -277,12 +297,12 @@ namespace System.Runtime.InteropServices
 
         public static bool IsArray(RuntimeTypeHandle type)
         {
-            return RuntimeImports.RhIsArray(type.ToEETypePtr());
+            return type.ToEETypePtr().IsArray;
         }
 
         public static RuntimeTypeHandle GetArrayElementType(RuntimeTypeHandle arrayType)
         {
-            return new RuntimeTypeHandle(RuntimeImports.RhGetRelatedParameterType(arrayType.ToEETypePtr()));
+            return new RuntimeTypeHandle(arrayType.ToEETypePtr().ArrayElementType);
         }
 
         public static RuntimeTypeHandle GetTypeHandle(this object target)

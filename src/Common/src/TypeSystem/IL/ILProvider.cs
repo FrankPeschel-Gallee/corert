@@ -21,6 +21,23 @@ namespace Internal.IL
         {
         }
 
+        private MethodIL TryGetRuntimeImplementedMethodIL(MethodDesc method)
+        {
+            // Provides method bodies for runtime implemented methods. It can return null for
+            // methods that are treated specially by the codegen.
+
+            Debug.Assert(method.IsRuntimeImplemented);
+
+            TypeDesc owningType = method.OwningType;
+
+            if (owningType.IsDelegate)
+            {
+                return DelegateMethodILEmitter.EmitIL(method);
+            }
+
+            return null;
+        }
+
         private MethodIL TryGetIntrinsicMethodIL(MethodDesc method)
         {
             // Provides method bodies for intrinsics recognized by the compiler.
@@ -36,13 +53,22 @@ namespace Internal.IL
 
             if (methodName == "UncheckedCast" && owningType.Name == "RuntimeHelpers" && owningType.Namespace == "System.Runtime.CompilerServices")
             {
-                return new ILStubMethodIL(new byte[] { (byte)ILOpcode.ldarg_0, (byte)ILOpcode.ret }, Array.Empty<LocalVariableDefinition>(), null);
+                return new ILStubMethodIL(method, new byte[] { (byte)ILOpcode.ldarg_0, (byte)ILOpcode.ret }, Array.Empty<LocalVariableDefinition>(), null);
             }
             else
             if ((methodName == "CompareExchange" || methodName == "Exchange") && method.HasInstantiation && owningType.Name == "Interlocked" && owningType.Namespace == "System.Threading")
             {
                 // TODO: Replace with regular implementation once ref locals are available in C# (https://github.com/dotnet/roslyn/issues/118)
                 return InterlockedIntrinsic.EmitIL(method);
+            }
+            else
+            if (methodName == "EETypePtrOf" && owningType.Name == "EETypePtr" && owningType.Namespace == "System")
+            {
+                return EETypePtrOfIntrinsic.EmitIL(method);
+            }
+            else if (owningType.Name == "InvokeUtils" && owningType.Namespace == "System")
+            {
+                return InvokeUtilsIntrinsics.EmitIL(method);
             }
 
             return null;
@@ -80,27 +106,41 @@ namespace Internal.IL
                 {
                     var pregenerated = McgInteropSupport.TryGetPregeneratedPInvoke(method);
                     if (pregenerated == null)
-                        return PInvokeMarshallingILEmitter.EmitIL(method);
+                        return PInvokeILEmitter.EmitIL(method);
                     method = pregenerated;
                 }
 
-                return EcmaMethodIL.Create((EcmaMethod)method);
+                if (method.IsRuntimeImplemented)
+                {
+                    MethodIL result = TryGetRuntimeImplementedMethodIL(method);
+                    if (result != null)
+                        return result;
+                }
+
+                MethodIL methodIL = EcmaMethodIL.Create((EcmaMethod)method);
+                if (methodIL != null)
+                    return methodIL;
+                
+                if (!method.IsInternalCall && !method.IsRuntimeImplemented)
+                {
+                    return MissingMethodBodyILEmitter.EmitIL(method);
+                }
+
+                return null;
             }
             else
-            if (method is MethodForInstantiatedType)
+            if (method is MethodForInstantiatedType || method is InstantiatedMethod)
             {
+                if (method.IsIntrinsic && method.Name == "CreateInstanceIntrinsic")
+                {
+                    // CreateInstanceIntrinsic is specialized per instantiation
+                    return CreateInstanceIntrinsic.EmitIL(method);
+                }
+
                 var methodDefinitionIL = GetMethodIL(method.GetTypicalMethodDefinition());
                 if (methodDefinitionIL == null)
                     return null;
-                return new InstantiatedMethodIL(methodDefinitionIL, method.OwningType.Instantiation, new Instantiation());
-            }
-            else
-            if (method is InstantiatedMethod)
-            {
-                var methodDefinitionIL = GetMethodIL(method.GetMethodDefinition());
-                if (methodDefinitionIL == null)
-                    return null;
-                return new InstantiatedMethodIL(methodDefinitionIL, new Instantiation(), method.Instantiation);
+                return new InstantiatedMethodIL(method, methodDefinitionIL, method.OwningType.Instantiation, method.Instantiation);
             }
             else
             if (method is ILStubMethod)
@@ -114,6 +154,7 @@ namespace Internal.IL
             }
             else
             {
+                Debug.Assert(!(method is PInvokeTargetNativeMethod), "Who is asking for IL of PInvokeTargetNativeMethod?");
                 return null;
             }
         }

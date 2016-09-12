@@ -2,30 +2,10 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-/*============================================================
-**
-**
-** Purpose: Provides some basic access to some environment 
-** functionality.
-**
-**
-============================================================*/
-
-using System.Text;
-using System.Collections;
-
 namespace System
 {
     public static partial class Environment
     {
-        internal static long TickCount64
-        {
-            get
-            {
-                return (long)Interop.mincore.GetTickCount64();
-            }
-        }
-
         public unsafe static String ExpandEnvironmentVariables(String name)
         {
             if (name == null)
@@ -143,6 +123,12 @@ namespace System
                     throw new InvalidOperationException(SR.InvalidOperation_ComputerName);
                 return new String(buf);
             }
+        }
+
+        public static void Exit(int exitCode)
+        {
+            // CORERT-TODO: Shut down the runtime
+            Interop.mincore.ExitProcess(exitCode);
         }
     }
 }

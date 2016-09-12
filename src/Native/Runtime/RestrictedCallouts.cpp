@@ -13,7 +13,7 @@
 #include "daccess.h"
 #include "PalRedhawkCommon.h"
 #include "PalRedhawk.h"
-#include "assert.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "holder.h"
 #include "gcrhinterface.h"
@@ -31,6 +31,7 @@
 #include "StackFrameIterator.h"
 #include "thread.h"
 #include "threadstore.h"
+#include "threadstore.inl"
 #include "RestrictedCallouts.h"
 
 // The head of the chains of GC callouts, one per callout type.

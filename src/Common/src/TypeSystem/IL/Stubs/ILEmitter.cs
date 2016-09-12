@@ -170,7 +170,21 @@ namespace Internal.IL.Stubs
 
             Emit(opcode);
             _offsetsNeedingPatching.Add(new LabelAndOffset(label, _length));
-            EmitUInt32(0);
+            EmitUInt32(4);
+        }
+
+        public void EmitSwitch(ILCodeLabel[] labels)
+        {
+            Emit(ILOpcode.switch_);
+            EmitUInt32(labels.Length);
+
+            int remainingBytes = labels.Length * 4;
+            foreach (var label in labels)
+            {
+                _offsetsNeedingPatching.Add(new LabelAndOffset(label, _length));
+                EmitUInt32(remainingBytes);
+                remainingBytes -= 4;
+            }
         }
 
         public void EmitLabel(ILCodeLabel label)
@@ -187,8 +201,15 @@ namespace Internal.IL.Stubs
                 Debug.Assert(patch.Label.IsPlaced);
                 Debug.Assert(_startOffsetForLinking > -1);
 
-                int value = patch.Label.AbsoluteOffset - _startOffsetForLinking - patch.Offset - 4;
                 int offset = patch.Offset;
+
+                int delta = _instructions[offset + 3] << 24 |
+                    _instructions[offset + 2] << 16 |
+                    _instructions[offset + 1] << 8 |
+                    _instructions[offset];
+
+                int value = patch.Label.AbsoluteOffset - _startOffsetForLinking - patch.Offset - delta;
+                
                 _instructions[offset] = (byte)value;
                 _instructions[offset + 1] = (byte)(value >> 8);
                 _instructions[offset + 2] = (byte)(value >> 16);
@@ -213,30 +234,49 @@ namespace Internal.IL.Stubs
         private byte[] _ilBytes;
         private LocalVariableDefinition[] _locals;
         private Object[] _tokens;
+        private MethodDesc _method;
 
-        public ILStubMethodIL(byte[] ilBytes, LocalVariableDefinition[] locals, Object[] tokens)
+        public ILStubMethodIL(MethodDesc owningMethod, byte[] ilBytes, LocalVariableDefinition[] locals, Object[] tokens)
         {
             _ilBytes = ilBytes;
             _locals = locals;
             _tokens = tokens;
+            _method = owningMethod;
         }
+
+        public override MethodDesc OwningMethod
+        {
+            get
+            {
+                return _method;
+            }
+        }
+
         public override byte[] GetILBytes()
         {
             return _ilBytes;
         }
-        public override int GetMaxStack()
+        public override int MaxStack
         {
-            // Conservative estimate...
-            return _ilBytes.Length;
+            get
+            {
+                // Conservative estimate...
+                return _ilBytes.Length;
+            }
         }
+
         public override ILExceptionRegion[] GetExceptionRegions()
         {
             return Array.Empty<ILExceptionRegion>();
         }
-        public override bool GetInitLocals()
+        public override bool IsInitLocals
         {
-            return true;
+            get
+            {
+                return true;
+            }
         }
+
         public override LocalVariableDefinition[] GetLocals()
         {
             return _locals;
@@ -343,7 +383,7 @@ namespace Internal.IL.Stubs
             return newLabel;
         }
 
-        public MethodIL Link()
+        public MethodIL Link(MethodDesc owningMethod)
         {
             int totalLength = 0;
             for (int i = 0; i < _codeStreams.Count; i++)
@@ -363,7 +403,7 @@ namespace Internal.IL.Stubs
                 copiedLength += ilCodeStream._length;
             }
 
-            return new ILStubMethodIL(ilInstructions, _locals.ToArray(), _tokens.ToArray());
+            return new ILStubMethodIL(owningMethod, ilInstructions, _locals.ToArray(), _tokens.ToArray());
         }
     }
 

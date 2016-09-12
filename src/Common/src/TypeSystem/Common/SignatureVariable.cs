@@ -61,12 +61,20 @@ namespace Internal.TypeSystem
 
         protected override TypeFlags ComputeTypeFlags(TypeFlags mask)
         {
+            // We might be able to compute the type flags for some masks, but for some this will always throw (e.g.
+            // Category and GenericVariance should always throw). If you hit an exception, it means you need a
+            // special case for IsSignatureVariable.
             throw new NotImplementedException();
         }
 
         public override TypeDesc InstantiateSignature(Instantiation typeInstantiation, Instantiation methodInstantiation)
         {
             return typeInstantiation.IsNull ? this : typeInstantiation[Index];
+        }
+
+        public override string ToString()
+        {
+            return "!" + Index.ToStringInvariant();
         }
     }
 
@@ -91,12 +99,20 @@ namespace Internal.TypeSystem
 
         protected override TypeFlags ComputeTypeFlags(TypeFlags mask)
         {
+            // We might be able to compute the type flags for some masks, but for some this will always throw (e.g.
+            // Category and GenericVariance should always throw). If you hit an exception, it means you need a
+            // special case for IsSignatureVariable.
             throw new NotImplementedException();
         }
 
         public override TypeDesc InstantiateSignature(Instantiation typeInstantiation, Instantiation methodInstantiation)
         {
             return methodInstantiation.IsNull ? this : methodInstantiation[Index];
+        }
+
+        public override string ToString()
+        {
+            return "!!" + Index.ToStringInvariant();
         }
     }
 }

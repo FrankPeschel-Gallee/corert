@@ -18,10 +18,10 @@
 .macro NESTED_END Name, Section
         LEAF_END \Name, \Section
 #if defined(__APPLE__)
+        .set LOCAL_LABEL(\Name\()_Size), . - C_FUNC(\Name)
         .section __LD,__compact_unwind,regular,debug
         .quad C_FUNC(\Name)
-        .set C_FUNC(\Name\()_Size), C_FUNC(\Name\()_End) - C_FUNC(\Name)
-        .long C_FUNC(\Name\()_Size)
+        .long LOCAL_LABEL(\Name\()_Size) 
         .long 0x04000000 # DWARF
         .quad 0
         .quad 0
@@ -50,9 +50,7 @@ C_FUNC(\Name):
         .cfi_startproc
 .endm
 
-.macro LEAF_END_MARKED Name, Section
-C_FUNC(\Name\()_End):
-        .global C_FUNC(\Name\()_End)
+.macro LEAF_END Name, Section
 #if !defined(__APPLE__)
         .size \Name, .-\Name
 #endif
@@ -73,16 +71,16 @@ C_FUNC(\Name\()_End):
 
 .macro alloc_stack Size
 .att_syntax
-        lea -\Size(%rsp), %rsp
+        lea -(\Size)(%rsp), %rsp
 .intel_syntax noprefix
-        .cfi_adjust_cfa_offset \Size
+        .cfi_adjust_cfa_offset (\Size)
 .endm
 
 .macro free_stack Size
 .att_syntax
-        lea \Size(%rsp), %rsp
+        lea (\Size)(%rsp), %rsp
 .intel_syntax noprefix
-        .cfi_adjust_cfa_offset -\Size
+        .cfi_adjust_cfa_offset -(\Size)
 .endm
 
 .macro set_cfa_register Reg, Offset
@@ -141,6 +139,13 @@ C_FUNC(\Name\()_End):
 
 .macro push_register Reg
         push            \Reg
+        .cfi_adjust_cfa_offset 8
+.endm
+
+.macro push_imm imm
+.att_syntax
+        push            $\imm
+.intel_syntax noprefix
         .cfi_adjust_cfa_offset 8
 .endm
 
@@ -215,6 +220,22 @@ C_FUNC(\Name\()_End):
 
 .endm
 
+//
+// CONSTANTS -- INTEGER
+//
+#define TSF_Attached                    0x01
+#define TSF_SuppressGcStress            0x08
+#define TSF_DoNotTriggerGc              0x10
+
+//
+// Rename fields of nested structs
+//
+#define OFFSETOF__Thread__m_alloc_context__alloc_ptr    OFFSETOF__Thread__m_rgbAllocContextBuffer + OFFSETOF__alloc_context__alloc_ptr
+#define OFFSETOF__Thread__m_alloc_context__alloc_limit  OFFSETOF__Thread__m_rgbAllocContextBuffer + OFFSETOF__alloc_context__alloc_limit
+
+// GC type flags
+#define GC_ALLOC_FINALIZE           1
+
 // Note: these must match the defs in PInvokeTransitionFrameFlags
 #define PTFF_SAVE_RBX            00000001h
 #define PTFF_SAVE_R12            00000010h
@@ -228,3 +249,68 @@ C_FUNC(\Name\()_End):
 #define PTFF_RAX_IS_GCREF        00010000h   // iff PTFF_SAVE_RAX: set -> eax is Object, clear -> eax is scalar
 #define PTFF_RAX_IS_BYREF        00020000h   // iff PTFF_SAVE_RAX: set -> eax is ByRef, clear -> eax is Object or scalar
 
+#define MANAGED_CALLOUT_THUNK_TRANSITION_FRAME_POINTER_OFFSET -8
+
+.macro INLINE_GETTHREAD
+        // Inlined version of call C_FUNC(RhpGetThread)
+       .att_syntax
+#if defined(__APPLE__)
+        movq    _tls_CurrentThread@TLVP(%rip), %rdi
+        callq   *(%rdi)
+#else
+        leaq    tls_CurrentThread@TLSLD(%rip), %rdi
+        callq   __tls_get_addr@PLT
+        addq    $tls_CurrentThread@DTPOFF, %rax
+#endif
+        .intel_syntax noprefix
+.endm
+
+.macro INLINE_THREAD_UNHIJACK threadReg, trashReg1, trashReg2
+        //
+        // Thread::Unhijack()
+        //
+        mov         \trashReg1, [\threadReg + OFFSETOF__Thread__m_pvHijackedReturnAddress]
+        cmp         \trashReg1, 0
+        je          1f
+
+        mov         \trashReg2, [\threadReg + OFFSETOF__Thread__m_ppvHijackedReturnAddressLocation]
+        mov         [\trashReg2], \trashReg1
+        mov         qword ptr [\threadReg + OFFSETOF__Thread__m_ppvHijackedReturnAddressLocation], 0
+        mov         qword ptr [\threadReg + OFFSETOF__Thread__m_pvHijackedReturnAddress], 0
+
+1:
+.endm
+
+DEFAULT_FRAME_SAVE_FLAGS = PTFF_SAVE_ALL_PRESERVED + PTFF_SAVE_RSP
+
+.macro PUSH_COOP_PINVOKE_FRAME trashReg
+    push_nonvol_reg rbp
+    mov             rbp, rsp
+    lea             \trashReg, [rsp +  10h]
+    push_register   \trashReg                   // save caller's RSP
+    push_nonvol_reg r15                         // save preserved registers
+    push_nonvol_reg r14                         //   ..
+    push_nonvol_reg r13                         //   ..
+    push_nonvol_reg r12                         //   ..
+    push_nonvol_reg rbx                         //   ..
+    push_imm        DEFAULT_FRAME_SAVE_FLAGS    // save the register bitmask
+    push_register   \trashReg                   // Thread * (unused by stackwalker)
+    push_register   rbp                         // save caller's RBP
+    mov             \trashReg, [rsp + 10*8]     // Find the return address
+    push_register   \trashReg                   // save m_RIP
+    lea             \trashReg, [rsp]            // trashReg == address of frame
+.endm
+
+.macro POP_COOP_PINVOKE_FRAME
+    pop_register r10    // discard RIP
+    pop_register r10    // discarp RBP
+    pop_register r10    // discard thread
+    pop_register r10    // discard bitmask
+    pop_nonvol_reg rbx
+    pop_nonvol_reg r12
+    pop_nonvol_reg r13
+    pop_nonvol_reg r14
+    pop_nonvol_reg r15
+    pop_register r10    // discard caller RSP
+    pop_nonvol_reg rbp
+.endm

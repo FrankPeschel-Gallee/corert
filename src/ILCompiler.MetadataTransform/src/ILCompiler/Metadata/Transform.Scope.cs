@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using Internal.Metadata.NativeFormat.Writer;
 
 using Cts = Internal.TypeSystem;
+using Ecma = System.Reflection.Metadata;
 
 using Debug = System.Diagnostics.Debug;
 using AssemblyFlags = Internal.Metadata.NativeFormat.AssemblyFlags;
@@ -15,9 +16,9 @@ using AssemblyContentType = System.Reflection.AssemblyContentType;
 
 namespace ILCompiler.Metadata
 {
-    public partial class Transform<TPolicy>
+    partial class Transform<TPolicy>
     {
-        private EntityMap<Cts.ModuleDesc, ScopeDefinition> _scopeDefs
+        internal EntityMap<Cts.ModuleDesc, ScopeDefinition> _scopeDefs
             = new EntityMap<Cts.ModuleDesc, ScopeDefinition>(EqualityComparer<Cts.ModuleDesc>.Default);
         private Action<Cts.ModuleDesc, ScopeDefinition> _initScopeDef;
 
@@ -34,7 +35,13 @@ namespace ILCompiler.Metadata
                 var assemblyName = assemblyDesc.GetName();
 
                 scopeDefinition.Name = HandleString(assemblyName.Name);
+#if NETFX_45
+                // With NET 4.5 contract System.Reflection 4.0.0.0 EcmaModule has no way
+                // to set Culture in its AssemblyName.
+                scopeDefinition.Culture = HandleString(assemblyName.CultureName ?? "");
+#else
                 scopeDefinition.Culture = HandleString(assemblyName.CultureName);
+#endif
                 scopeDefinition.MajorVersion = checked((ushort)assemblyName.Version.Major);
                 scopeDefinition.MinorVersion = checked((ushort)assemblyName.Version.Minor);
                 scopeDefinition.BuildNumber = checked((ushort)assemblyName.Version.Build);
@@ -49,23 +56,33 @@ namespace ILCompiler.Metadata
                     scopeDefinition.Flags |= (AssemblyFlags)((int)AssemblyContentType.WindowsRuntime << 9);
                 }
 
-                scopeDefinition.PublicKey = assemblyName.GetPublicKey();
+                if ((scopeDefinition.Flags & AssemblyFlags.PublicKey) != 0)
+                {
+                    scopeDefinition.PublicKey = assemblyName.GetPublicKey();
+                }
+                else
+                {
+                    scopeDefinition.PublicKey = assemblyName.GetPublicKeyToken();
+                }
 
-                // TODO: CustomAttributes
+                Cts.Ecma.EcmaAssembly ecmaAssembly = module as Cts.Ecma.EcmaAssembly;
+                if (ecmaAssembly != null)
+                {
+                    Ecma.CustomAttributeHandleCollection customAttributes = ecmaAssembly.AssemblyDefinition.GetCustomAttributes();
+                    if (customAttributes.Count > 0)
+                    {
+                        scopeDefinition.CustomAttributes = HandleCustomAttributes(ecmaAssembly, customAttributes);
+                    }
+                }
             }
             else
             {
                 throw new NotSupportedException("Multi-module assemblies");
             }
-
-            scopeDefinition.RootNamespaceDefinition = new NamespaceDefinition
-            {
-                Name = null,
-                ParentScopeOrNamespace = scopeDefinition,
-            };
         }
 
-        private EntityMap<Cts.ModuleDesc, ScopeReference> _scopeRefs;
+        private EntityMap<Cts.ModuleDesc, ScopeReference> _scopeRefs
+            = new EntityMap<Cts.ModuleDesc, ScopeReference>(EqualityComparer<Cts.ModuleDesc>.Default);
         private Action<Cts.ModuleDesc, ScopeReference> _initScopeRef;
 
         private ScopeReference HandleScopeReference(Cts.ModuleDesc module)
@@ -89,17 +106,16 @@ namespace ILCompiler.Metadata
 
                 Debug.Assert((int)AssemblyFlags.PublicKey == (int)AssemblyNameFlags.PublicKey);
                 Debug.Assert((int)AssemblyFlags.Retargetable == (int)AssemblyNameFlags.Retargetable);
-                scopeReference.Flags = (AssemblyFlags)assemblyName.Flags;
+
+                // References use a public key token instead of full public key.
+                scopeReference.Flags = (AssemblyFlags)(assemblyName.Flags & ~AssemblyNameFlags.PublicKey);
 
                 if (assemblyName.ContentType == AssemblyContentType.WindowsRuntime)
                 {
                     scopeReference.Flags |= (AssemblyFlags)((int)AssemblyContentType.WindowsRuntime << 9);
                 }
 
-                if ((assemblyName.Flags & AssemblyNameFlags.PublicKey) != 0)
-                    scopeReference.PublicKeyOrToken = assemblyName.GetPublicKey();
-                else
-                    scopeReference.PublicKeyOrToken = assemblyName.GetPublicKeyToken();
+                scopeReference.PublicKeyOrToken = assemblyName.GetPublicKeyToken();
             }
             else
             {

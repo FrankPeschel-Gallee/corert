@@ -8,7 +8,7 @@
 #include "PalRedhawkCommon.h"
 #include "PalRedhawk.h"
 #include "RedhawkWarnings.h"
-#include "assert.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "varint.h"
@@ -20,6 +20,7 @@
 #include "RWLock.h"
 #include "event.h"
 #include "threadstore.h"
+#include "threadstore.inl"
 #include "stressLog.h"
 
 #include "shash.h"
@@ -30,7 +31,7 @@
 // warning C4061: enumerator '{blah}' in switch of enum '{blarg}' is not explicitly handled by a case label
 #pragma warning(disable:4061)
 
-#if !defined(CORERT) // @TODO: CORERT: these are (currently) only implemented in assembly helpers
+#if !defined(USE_PORTABLE_HELPERS) // @TODO: CORERT: these are (currently) only implemented in assembly helpers
 // When we use a thunk to call out to managed code from the runtime the following label is the instruction
 // immediately following the thunk's call instruction. As such it can be used to identify when such a callout
 // has occured as we are walking the stack.
@@ -61,7 +62,7 @@ EXTERN_C void * RhpThrowHwEx2;
 GVAL_IMPL_INIT(PTR_VOID, g_RhpThrowHwEx2Addr, &RhpThrowHwEx2);
 EXTERN_C void * RhpRethrow2;
 GVAL_IMPL_INIT(PTR_VOID, g_RhpRethrow2Addr, &RhpRethrow2);
-#endif //!defined(CORERT)
+#endif // !defined(USE_PORTABLE_HELPERS)
 
 // Addresses of functions in the DAC won't match their runtime counterparts so we
 // assign them to globals. However it is more performant in the runtime to compare
@@ -352,6 +353,29 @@ void StackFrameIterator::InternalInit(Thread * pThreadToWalk, PTR_PAL_LIMITED_CO
 #elif defined(_TARGET_ARM64_)
     PORTABILITY_ASSERT("@TODO: FIXME:ARM64");
 
+#elif defined(UNIX_AMD64_ABI)
+    //
+    // preserved regs
+    //
+    m_RegDisplay.pRbp = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pCtx, Rbp);
+    m_RegDisplay.pRbx = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pCtx, Rbx);
+    m_RegDisplay.pR12 = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pCtx, R12);
+    m_RegDisplay.pR13 = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pCtx, R13);
+    m_RegDisplay.pR14 = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pCtx, R14);
+    m_RegDisplay.pR15 = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pCtx, R15);
+
+    //
+    // scratch regs
+    //
+    m_RegDisplay.pRax = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pCtx, Rax);
+    m_RegDisplay.pRcx = NULL;
+    m_RegDisplay.pRdx = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pCtx, Rdx);
+    m_RegDisplay.pRsi = NULL;
+    m_RegDisplay.pRdi = NULL;
+    m_RegDisplay.pR8  = NULL;
+    m_RegDisplay.pR9  = NULL;
+    m_RegDisplay.pR10 = NULL;
+    m_RegDisplay.pR11 = NULL;
 #else // _TARGET_ARM_
     //
     // preserved regs
@@ -415,7 +439,7 @@ PTR_VOID StackFrameIterator::HandleExCollide(PTR_ExInfo pExInfo)
         ASSERT(IsValid());
 
         if ((pExInfo->m_kind == EK_HardwareFault) && (curFlags & RemapHardwareFaultsToSafePoint))
-            GetCodeManager()->RemapHardwareFaultToGCSafePoint(&m_methodInfo, &m_codeOffset);
+            m_effectiveSafePointAddress = GetCodeManager()->RemapHardwareFaultToGCSafePoint(&m_methodInfo, m_ControlPC);
     }
     else
     {
@@ -490,6 +514,14 @@ void StackFrameIterator::UpdateFromExceptionDispatch(PTR_StackFrameIterator pSou
 #elif defined(_TARGET_ARM64_)
     PORTABILITY_ASSERT("@TODO: FIXME:ARM64");
 
+#elif defined(UNIX_AMD64_ABI)
+    // Save the preserved regs portion of the REGDISPLAY across the unwind through the C# EH dispatch code.
+    m_RegDisplay.pRbp = thisFuncletPtrs.pRbp;
+    m_RegDisplay.pRbx = thisFuncletPtrs.pRbx;
+    m_RegDisplay.pR12 = thisFuncletPtrs.pR12;
+    m_RegDisplay.pR13 = thisFuncletPtrs.pR13;
+    m_RegDisplay.pR14 = thisFuncletPtrs.pR14;
+    m_RegDisplay.pR15 = thisFuncletPtrs.pR15;
 #else
     // Save the preserved regs portion of the REGDISPLAY across the unwind through the C# EH dispatch code.
     m_RegDisplay.pRbp = thisFuncletPtrs.pRbp;
@@ -513,9 +545,9 @@ void StackFrameIterator::UnwindFuncletInvokeThunk()
 {
     ASSERT((m_dwFlags & MethodStateCalculated) == 0);
 
-#if defined(CORERT) // @TODO: CORERT: Currently no funclet invoke defined in a portable way
+#if defined(USE_PORTABLE_HELPERS) // @TODO: CORERT: Currently no funclet invoke defined in a portable way
     return;
-#else // defined(CORERT)
+#else // defined(USE_PORTABLE_HELPERS)
     ASSERT(CategorizeUnadjustedReturnAddress(m_ControlPC) == InFuncletInvokeThunk);
 
     PTR_UIntNative SP;
@@ -537,7 +569,39 @@ void StackFrameIterator::UnwindFuncletInvokeThunk()
 
     bool isFilterInvoke = EQUALS_CODE_ADDRESS(m_ControlPC, RhpCallFilterFunclet2);
 
-#ifdef _TARGET_AMD64_
+#if defined(UNIX_AMD64_ABI)
+    if (isFilterInvoke)
+    {
+        SP = (PTR_UIntNative)(m_RegDisplay.SP);
+        m_RegDisplay.pRbp = SP++;
+    }
+    else
+    {
+        // Save the preserved regs portion of the REGDISPLAY across the unwind through the C# EH dispatch code.
+        m_funcletPtrs.pRbp = m_RegDisplay.pRbp;
+        m_funcletPtrs.pRbx = m_RegDisplay.pRbx;
+        m_funcletPtrs.pR12 = m_RegDisplay.pR12;
+        m_funcletPtrs.pR13 = m_RegDisplay.pR13;
+        m_funcletPtrs.pR14 = m_RegDisplay.pR14;
+        m_funcletPtrs.pR15 = m_RegDisplay.pR15;
+
+        if (EQUALS_CODE_ADDRESS(m_ControlPC, RhpCallCatchFunclet2))
+        {
+            SP = (PTR_UIntNative)(m_RegDisplay.SP + 0x38);
+        }
+        else
+        {
+            SP = (PTR_UIntNative)(m_RegDisplay.SP + 0x18);
+        }
+
+        m_RegDisplay.pRbp = SP++;
+        m_RegDisplay.pRbx = SP++;
+        m_RegDisplay.pR12 = SP++;
+        m_RegDisplay.pR13 = SP++;
+        m_RegDisplay.pR14 = SP++;
+        m_RegDisplay.pR15 = SP++;
+    }
+#elif defined(_TARGET_AMD64_)
     if (isFilterInvoke)
     {
         SP = (PTR_UIntNative)(m_RegDisplay.SP + 0x20);
@@ -555,7 +619,14 @@ void StackFrameIterator::UnwindFuncletInvokeThunk()
         m_funcletPtrs.pR14 = m_RegDisplay.pR14;
         m_funcletPtrs.pR15 = m_RegDisplay.pR15;
 
-        SP = (PTR_UIntNative)(m_RegDisplay.SP + 0x28);
+        if (EQUALS_CODE_ADDRESS(m_ControlPC, RhpCallCatchFunclet2))
+        {
+            SP = (PTR_UIntNative)(m_RegDisplay.SP + 0x38);
+        }
+        else
+        {
+            SP = (PTR_UIntNative)(m_RegDisplay.SP + 0x28);
+        }
 
         m_RegDisplay.pRbp = SP++;
         m_RegDisplay.pRdi = SP++;
@@ -565,11 +636,6 @@ void StackFrameIterator::UnwindFuncletInvokeThunk()
         m_RegDisplay.pR13 = SP++;
         m_RegDisplay.pR14 = SP++;
         m_RegDisplay.pR15 = SP++;
-
-        // RhpCallCatchFunclet puts a couple of extra things on the stack that aren't put there by the other two  
-        // thunks, but we don't need to know what they are here, so we just skip them.
-        if (EQUALS_CODE_ADDRESS(m_ControlPC, RhpCallCatchFunclet2))
-            SP += 2;
     }
 #elif defined(_TARGET_X86_)
     if (isFilterInvoke)
@@ -642,7 +708,7 @@ void StackFrameIterator::UnwindFuncletInvokeThunk()
     // We expect to be called by the runtime's C# EH implementation, and since this function's notion of how 
     // to unwind through the stub is brittle relative to the stub itself, we want to check as soon as we can.
     ASSERT(m_pInstance->FindCodeManagerByAddress(m_ControlPC) && "unwind from funclet invoke stub failed");
-#endif // defined(CORERT)
+#endif // defined(USE_PORTABLE_HELPERS)
 }
 
 // For a given target architecture, the layout of this structure must precisely match the
@@ -745,9 +811,9 @@ void StackFrameIterator::UnwindUniversalTransitionThunk()
 {
     ASSERT((m_dwFlags & MethodStateCalculated) == 0);
 
-#if defined(CORERT) // @TODO: CORERT: Corresponding helper code is only defined in assembly code
+#if defined(USE_PORTABLE_HELPERS) // @TODO: CORERT: Corresponding helper code is only defined in assembly code
     return;
-#else // defined(CORERT)
+#else // defined(USE_PORTABLE_HELPERS)
     ASSERT(CategorizeUnadjustedReturnAddress(m_ControlPC) == InUniversalTransitionThunk);
 
     // The current PC is within RhpUniversalTransition, so establish a view of the surrounding stack frame.
@@ -769,16 +835,16 @@ void StackFrameIterator::UnwindUniversalTransitionThunk()
     ASSERT(pLowerBound != NULL);
     ASSERT(m_pConservativeStackRangeLowerBound == NULL);
     m_pConservativeStackRangeLowerBound = pLowerBound;
-#endif // defined(CORERT)
+#endif // defined(USE_PORTABLE_HELPERS)
 }
 
-#ifdef _AMD64_
+#ifdef _TARGET_AMD64_
 #define STACK_ALIGN_SIZE 16
-#elif defined(_ARM_)
+#elif defined(_TARGET_ARM_)
 #define STACK_ALIGN_SIZE 8
-#elif defined(_ARM64_)
+#elif defined(_TARGET_ARM64_)
 #define STACK_ALIGN_SIZE 16
-#elif defined(_X86_)
+#elif defined(_TARGET_X86_)
 #define STACK_ALIGN_SIZE 4
 #endif
 
@@ -821,9 +887,9 @@ void StackFrameIterator::UnwindCallDescrThunk()
 {
     ASSERT((m_dwFlags & MethodStateCalculated) == 0);
 
-#if defined(CORERT) // @TODO: CORERT: Corresponding helper code is only defined in assembly code
+#if defined(USE_PORTABLE_HELPERS) // @TODO: CORERT: Corresponding helper code is only defined in assembly code
     return;
-#else // defined(CORERT)
+#else // defined(USE_PORTABLE_HELPERS)
     ASSERT(CategorizeUnadjustedReturnAddress(m_ControlPC) == InCallDescrThunk);
 
     UIntNative newSP;
@@ -882,16 +948,16 @@ void StackFrameIterator::UnwindCallDescrThunk()
     m_RegDisplay.SetIP(pContext->IP);
     m_RegDisplay.SetSP(newSP);
     m_ControlPC = dac_cast<PTR_VOID>(pContext->IP);
-#endif // defined(CORERT)
+#endif // defined(USE_PORTABLE_HELPERS)
 }
 
 void StackFrameIterator::UnwindThrowSiteThunk()
 {
     ASSERT((m_dwFlags & MethodStateCalculated) == 0);
 
-#if defined(CORERT) // @TODO: CORERT: no portable version of throw helpers
+#if defined(USE_PORTABLE_HELPERS) // @TODO: CORERT: no portable version of throw helpers
     return;
-#else // defined(CORERT)
+#else // defined(USE_PORTABLE_HELPERS)
     ASSERT(CategorizeUnadjustedReturnAddress(m_ControlPC) == InThrowSiteThunk);
 
     const UIntNative STACKSIZEOF_ExInfo = ((sizeof(ExInfo) + (STACK_ALIGN_SIZE-1)) & ~(STACK_ALIGN_SIZE-1));
@@ -904,7 +970,14 @@ void StackFrameIterator::UnwindThrowSiteThunk()
     PTR_PAL_LIMITED_CONTEXT pContext = (PTR_PAL_LIMITED_CONTEXT)
                                         (m_RegDisplay.SP + SIZEOF_OutgoingScratch + STACKSIZEOF_ExInfo);
 
-#ifdef _TARGET_AMD64_
+#if defined(UNIX_AMD64_ABI)
+    m_RegDisplay.pRbp = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pContext, Rbp);
+    m_RegDisplay.pRbx = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pContext, Rbx);
+    m_RegDisplay.pR12 = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pContext, R12);
+    m_RegDisplay.pR13 = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pContext, R13);
+    m_RegDisplay.pR14 = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pContext, R14);
+    m_RegDisplay.pR15 = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pContext, R15);
+#elif defined(_TARGET_AMD64_)
     m_RegDisplay.pRbp = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pContext, Rbp);
     m_RegDisplay.pRdi = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pContext, Rdi);
     m_RegDisplay.pRsi = PTR_TO_MEMBER(PAL_LIMITED_CONTEXT, pContext, Rsi);
@@ -941,7 +1014,7 @@ void StackFrameIterator::UnwindThrowSiteThunk()
     // We expect the throw site to be in managed code, and since this function's notion of how to unwind 
     // through the stub is brittle relative to the stub itself, we want to check as soon as we can.
     ASSERT(m_pInstance->FindCodeManagerByAddress(m_ControlPC) && "unwind from throw site stub failed");
-#endif // defined(CORERT)
+#endif // defined(USE_PORTABLE_HELPERS)
 }
 
 // If our control PC indicates that we're in one of the thunks we use to make managed callouts from the
@@ -959,9 +1032,9 @@ void StackFrameIterator::UnwindThrowSiteThunk()
 // the incorrect SP value is ignored and does not break the unwind.
 void StackFrameIterator::UnwindManagedCalloutThunk()
 {
-#if defined(CORERT) // @TODO: CORERT: no portable version of managed callout defined
+#if defined(USE_PORTABLE_HELPERS) // @TODO: CORERT: no portable version of managed callout defined
     return;
-#else // defined(CORERT)
+#else // defined(USE_PORTABLE_HELPERS)
     ASSERT(CategorizeUnadjustedReturnAddress(m_ControlPC) == InManagedCalloutThunk);
 
     // We're in a special thunk we use to call into managed code from unmanaged code in the runtime. This
@@ -1001,7 +1074,7 @@ void StackFrameIterator::UnwindManagedCalloutThunk()
     PTR_UIntNative pLowerBound = (PTR_UIntNative)pEntryToRuntimeFrame;
     FAILFAST_OR_DAC_FAIL((pNestedLowerBound == NULL) || (pNestedLowerBound > pLowerBound));
     m_pConservativeStackRangeLowerBound = pLowerBound;
-#endif // defined(CORERT)
+#endif // defined(USE_PORTABLE_HELPERS)
 }
 
 bool StackFrameIterator::IsValid()
@@ -1039,7 +1112,7 @@ UnwindOutOfCurrentManagedFrame:
 #endif
 
     PTR_VOID pPreviousTransitionFrame;
-    FAILFAST_OR_DAC_FAIL(GetCodeManager()->UnwindStackFrame(&m_methodInfo, m_codeOffset, &m_RegDisplay, &pPreviousTransitionFrame));
+    FAILFAST_OR_DAC_FAIL(GetCodeManager()->UnwindStackFrame(&m_methodInfo, &m_RegDisplay, &pPreviousTransitionFrame));
     bool doingFuncletUnwind = GetCodeManager()->IsFunclet(&m_methodInfo);
 
     if (pPreviousTransitionFrame != NULL)
@@ -1355,10 +1428,10 @@ REGDISPLAY * StackFrameIterator::GetRegisterSet()
     return &m_RegDisplay;
 }
 
-UInt32 StackFrameIterator::GetCodeOffset()
+PTR_VOID StackFrameIterator::GetEffectiveSafePointAddress()
 {
     ASSERT(IsValid());
-    return m_codeOffset;
+    return m_effectiveSafePointAddress;
 }
 
 ICodeManager * StackFrameIterator::GetCodeManager()
@@ -1385,14 +1458,15 @@ void StackFrameIterator::CalculateCurrentMethodState()
         return;
 
     // Assume that the caller is likely to be in the same module
-    if (m_pCodeManager == NULL || !m_pCodeManager->FindMethodInfo(m_ControlPC, &m_methodInfo, &m_codeOffset))
+    if (m_pCodeManager == NULL || !m_pCodeManager->FindMethodInfo(m_ControlPC, &m_methodInfo))
     {
         m_pCodeManager = m_pInstance->FindCodeManagerByAddress(m_ControlPC);
         FAILFAST_OR_DAC_FAIL(m_pCodeManager);
 
-        FAILFAST_OR_DAC_FAIL(m_pCodeManager->FindMethodInfo(m_ControlPC, &m_methodInfo, &m_codeOffset));
+        FAILFAST_OR_DAC_FAIL(m_pCodeManager->FindMethodInfo(m_ControlPC, &m_methodInfo));
     }
 
+    m_effectiveSafePointAddress = m_ControlPC;
     m_FramePointer = GetCodeManager()->GetFramePointer(&m_methodInfo, &m_RegDisplay);
 
     m_dwFlags |= MethodStateCalculated;
@@ -1425,7 +1499,6 @@ bool StackFrameIterator::IsNonEHThunk(ReturnAddressCategory category)
 
 bool StackFrameIterator::IsValidReturnAddress(PTR_VOID pvAddress)
 {
-#if !defined(CORERT) // @TODO: CORERT: no portable version of these helpers defined
     // These are return addresses into functions that call into managed (non-funclet) code, so we might see
     // them as hijacked return addresses.
     ReturnAddressCategory category = CategorizeUnadjustedReturnAddress(pvAddress);
@@ -1440,7 +1513,6 @@ bool StackFrameIterator::IsValidReturnAddress(PTR_VOID pvAddress)
     // hijacks will never execute.
     if (category == InThrowSiteThunk)
         return true;
-#endif // !defined(CORERT)
 
     return (NULL != GetRuntimeInstance()->FindCodeManagerByAddress(pvAddress));
 }
@@ -1496,11 +1568,11 @@ PTR_VOID StackFrameIterator::AdjustReturnAddressBackward(PTR_VOID controlPC)
 // static
 StackFrameIterator::ReturnAddressCategory StackFrameIterator::CategorizeUnadjustedReturnAddress(PTR_VOID returnAddress)
 {
-#if defined(CORERT) // @TODO: CORERT: no portable thunks are defined
+#if defined(USE_PORTABLE_HELPERS) // @TODO: CORERT: no portable thunks are defined
 
     return InManagedCode;
 
-#else // defined(CORERT)
+#else // defined(USE_PORTABLE_HELPERS)
 
 #if defined(FEATURE_DYNAMIC_CODE)
     if (EQUALS_CODE_ADDRESS(returnAddress, ReturnFromCallDescrThunk))
@@ -1539,7 +1611,7 @@ StackFrameIterator::ReturnAddressCategory StackFrameIterator::CategorizeUnadjust
     }
 
     return InManagedCode;
-#endif // defined(CORERT)
+#endif // defined(USE_PORTABLE_HELPERS)
 }
 
 #ifndef DACCESS_COMPILE

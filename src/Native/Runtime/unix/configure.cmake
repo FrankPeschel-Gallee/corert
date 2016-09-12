@@ -16,7 +16,6 @@ endif()
 list(APPEND CMAKE_REQUIRED_DEFINITIONS -D_FILE_OFFSET_BITS=64)
 
 check_include_files(ieeefp.h HAVE_IEEEFP_H)
-check_include_files(alloca.h HAVE_ALLOCA_H)
 check_include_files(sys/vmparam.h HAVE_SYS_VMPARAM_H)
 check_include_files(mach/vm_types.h HAVE_MACH_VM_TYPES_H)
 check_include_files(mach/vm_param.h HAVE_MACH_VM_PARAM_H)
@@ -870,6 +869,22 @@ int main(int argc, char **argv)
         libUnwindContext = uContext;
         return 0;
 }" UNWIND_CONTEXT_IS_UCONTEXT_T)
+
+check_cxx_source_compiles("
+#include <pthread_np.h>
+
+int main(int argc, char **argv)
+{
+    return (int)pthread_getthreadid_np();
+}" HAVE_PTHREAD_GETTHREADID_NP)
+
+check_cxx_source_compiles("
+#include <lwp.h>
+
+int main(int argc, char **argv)
+{
+    return (int)_lwp_self();
+}" HAVE_LWP_SELF)
 
 if(CMAKE_SYSTEM_NAME STREQUAL Darwin)
   if(NOT HAVE_LIBUUID_H)

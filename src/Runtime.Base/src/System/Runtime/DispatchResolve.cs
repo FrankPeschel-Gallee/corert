@@ -4,6 +4,8 @@
 
 using System.Diagnostics;
 
+using Internal.Runtime;
+
 namespace System.Runtime
 {
     internal unsafe static class DispatchResolve
@@ -42,7 +44,7 @@ namespace System.Runtime
                         pCur, pItfType, itfSlotNumber, &implSlotNumber))
                 {
                     IntPtr targetMethod;
-                    if (implSlotNumber < pCur->NumVTableSlots)
+                    if (implSlotNumber < pCur->NumVtableSlots)
                     {
                         // true virtual - need to get the slot from the target type in case it got overridden
                         targetMethod = pTgtType->GetVTableStartAddress()[implSlotNumber];
@@ -51,12 +53,12 @@ namespace System.Runtime
                     {
                         // sealed virtual - need to get the slot form the implementing type, because
                         // it's not present on the target type
-                        targetMethod = pCur->GetSealedVirtualSlot((ushort)(implSlotNumber - pCur->NumVTableSlots));
+                        targetMethod = pCur->GetSealedVirtualSlot((ushort)(implSlotNumber - pCur->NumVtableSlots));
                     }
                     return targetMethod;
                 }
                 if (pCur->IsArray)
-                    pCur = pCur->ArrayBaseType;
+                    pCur = pCur->GetArrayEEType();
                 else
                     pCur = pCur->NonArrayBaseType;
                 iCurInheritanceChainDelta++;
