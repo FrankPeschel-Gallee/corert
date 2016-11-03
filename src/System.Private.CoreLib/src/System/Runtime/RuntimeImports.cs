@@ -251,8 +251,16 @@ namespace System.Runtime
         internal static unsafe extern object RhBox(EETypePtr pEEType, void* pData);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
+        [RuntimeImport(RuntimeLibrary, "RhBox")]
+        internal static unsafe extern object RhBox(EETypePtr pEEType, ref byte data);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhUnbox")]
         internal static unsafe extern void RhUnbox(object obj, void* pData, EETypePtr pUnboxToEEType);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        [RuntimeImport(RuntimeLibrary, "RhUnbox")]
+        internal static unsafe extern void RhUnbox(object obj, ref byte data, EETypePtr pUnboxToEEType);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhMemberwiseClone")]
@@ -264,9 +272,9 @@ namespace System.Runtime
         internal static extern void RhSpinWait(int iterations);
 
         // Yield the cpu to another thread ready to process, if one is available.
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhYield")]
-        internal static extern bool RhYield();
+        [DllImport(RuntimeLibrary, EntryPoint = "RhYield", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        private static extern int _RhYield();
+        internal static bool RhYield() { return (_RhYield() != 0); }
 
         // Wait for any object to be signalled, in a way that's compatible with the CLR's behavior in an STA.
         // ExactSpelling = 'true' to force MCG to resolve it to default
@@ -295,10 +303,6 @@ namespace System.Runtime
         [RuntimeImport(RuntimeLibrary, "RhCreateGenericInstanceDescForType2")]
         internal static unsafe extern bool RhCreateGenericInstanceDescForType2(EETypePtr pEEType, int arity, int nonGcStaticDataSize,
             int nonGCStaticDataOffset, int gcStaticDataSize, int threadStaticsOffset, void* pGcStaticsDesc, void* pThreadStaticsDesc, int* pGenericVarianceFlags);
-
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "RhSetGenericInstantiation")]
-        internal static unsafe extern bool RhSetGenericInstantiation(EETypePtr pEEType, EETypePtr pEETypeDef, int arity, EETypePtr* pInstantiation);
 
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhNewInterfaceDispatchCell")]
@@ -457,15 +461,24 @@ namespace System.Runtime
         [RuntimeImport(RuntimeLibrary, "RhGetCurrentThreadStackTrace")]
         internal static extern int RhGetCurrentThreadStackTrace(IntPtr[] outputBuffer);
 
+        [MethodImplAttribute(MethodImplOptions.InternalCall)]
+        [RuntimeImport(RuntimeLibrary, "RhGetCurrentThreadStackBounds")]
+        internal static extern void RhGetCurrentThreadStackBounds(out IntPtr pStackLow, out IntPtr pStackHigh);
+
         // Functions involved in thunks from managed to managed functions (Universal transition transitions 
         // from an arbitrary method call into a defined function, and CallDescrWorker goes the other way.
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhGetUniversalTransitionThunk")]
         internal static extern IntPtr RhGetUniversalTransitionThunk();
 
+        // For Managed to Managed calls
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhCallDescrWorker")]
         internal static extern void RhCallDescrWorker(IntPtr callDescr);
+
+        // For Managed to Native calls
+        [DllImport(RuntimeLibrary, EntryPoint = "RhCallDescrWorker", ExactSpelling = true)]
+        internal static extern void RhCallDescrWorkerNative(IntPtr callDescr);
 
         // Moves memory from smem to dmem. Size must be a positive value.
         // This copy uses an intrinsic to be safe for copying arbitrary bits of
@@ -548,19 +561,12 @@ namespace System.Runtime
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "RhpMemoryBarrier")]
         internal extern static void MemoryBarrier();
+#endif // CORERT
 
         [Intrinsic]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [RuntimeImport(RuntimeLibrary, "fabs")]
         internal static extern double fabs(double x);
-#endif // CORERT
-
-#if !CORERT
-        [Intrinsic]
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        [RuntimeImport(RuntimeLibrary, "_copysign")]
-        internal static extern double _copysign(double x, double y);
-#endif // !CORERT
 
         [Intrinsic]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]

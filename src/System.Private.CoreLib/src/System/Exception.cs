@@ -9,6 +9,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime;
+using System.Runtime.Serialization;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 
@@ -17,7 +18,7 @@ using Internal.Runtime.Augments;
 
 namespace System
 {
-    public class Exception
+    public class Exception : ISerializable
     {
         private void Init()
         {
@@ -48,6 +49,10 @@ namespace System
             _innerException = innerException;
         }
 
+        protected Exception(SerializationInfo info, StreamingContext context)
+        {
+            throw new NotImplementedException();
+        }
 
         public virtual String Message
         {
@@ -210,6 +215,10 @@ namespace System
             get { return _innerException; }
         }
 
+        public virtual void GetObjectData(SerializationInfo info, StreamingContext context)
+        {
+            throw new NotImplementedException();
+        }
 
         private string GetStackTrace(bool needFileInfo)
         {
@@ -330,10 +339,9 @@ namespace System
         private IntPtr[] _corDbgStackTrace;
         private int _idxFirstFreeStackTraceEntry;
 
-        private void AppendStackFrame(IntPtr IP, bool isFirstRethrowFrame)
+        private void AppendStackIP(IntPtr IP, bool isFirstRethrowFrame)
         {
-            if (this is OutOfMemoryException)
-                return;  // Allocating arrays in an OOM situation might be counterproductive...
+            Debug.Assert(!(this is OutOfMemoryException), "Avoid allocations if out of memory");
 
             if (_idxFirstFreeStackTraceEntry == 0)
             {
@@ -352,7 +360,6 @@ namespace System
                 GrowStackTrace();
 
             _corDbgStackTrace[_idxFirstFreeStackTraceEntry++] = IP;
-            return;
         }
 
         private void GrowStackTrace()
@@ -380,22 +387,38 @@ namespace System
         }
 
         [RuntimeExport("AppendExceptionStackFrame")]
-        private static void AppendExceptionStackFrame(Exception ex, IntPtr IP, int flags)
+        private static void AppendExceptionStackFrame(object exceptionObj, IntPtr IP, int flags)
         {
             // This method is called by the runtime's EH dispatch code and is not allowed to leak exceptions
             // back into the dispatcher.
             try
             {
+                Exception ex = exceptionObj as Exception;
+                if (ex == null)
+                    Environment.FailFast("Exceptions must derive from the System.Exception class");
+
+                if (!RuntimeExceptionHelpers.SafeToPerformRichExceptionSupport)
+                    return;
+
                 bool isFirstFrame = (flags & (int)RhEHFrameType.RH_EH_FIRST_FRAME) != 0;
                 bool isFirstRethrowFrame = (flags & (int)RhEHFrameType.RH_EH_FIRST_RETHROW_FRAME) != 0;
 
-                ex.AppendStackFrame(IP, isFirstRethrowFrame);
+                // If out of memory, avoid any calls that may allocate.  Otherwise, they may fail
+                // with another OutOfMemoryException, which may lead to infinite recursion.
+                bool outOfMemory = ex is OutOfMemoryException;
+
+                if (!outOfMemory)
+                    ex.AppendStackIP(IP, isFirstRethrowFrame);
+
                 if (isFirstFrame)
                 {
+                    string typeName = !outOfMemory ? ex.GetType().ToString() : "System.OutOfMemoryException";
+                    string message = !outOfMemory ? ex.Message :
+                        "Insufficient memory to continue the execution of the program.";
+
                     unsafe
                     {
-                        fixed (char* exceptionTypeName = ex.GetType().ToString())
-                        fixed (char* exceptionMessage = ex.Message)
+                        fixed (char* exceptionTypeName = typeName, exceptionMessage = message)
                             RuntimeImports.RhpEtwExceptionThrown(exceptionTypeName, exceptionMessage, IP, ex.HResult);
                     }
                 }

@@ -72,7 +72,7 @@ namespace Internal.Metadata.NativeFormat.Writer
             where DstT : MetadataRecord;
 
         // Adds grouped edges
-        List<DstT> Visit<SrcT, DstT>(SrcT src, IEnumerable<DstT> dst)
+        List<DstT> Visit<SrcT, DstT>(SrcT src, List<DstT> dst)
             where SrcT : MetadataRecord
             where DstT : MetadataRecord;
     }
@@ -234,14 +234,18 @@ namespace Internal.Metadata.NativeFormat.Writer
         }
 
         // Adds Edges
-        public List<DstT> Visit<SrcT, DstT>(SrcT src, IEnumerable<DstT> dst)
+        public List<DstT> Visit<SrcT, DstT>(SrcT src, List<DstT> dst)
             where SrcT : MetadataRecord
             where DstT : MetadataRecord
         {
 #if false
             return GetPooledArray(dst.Select(d => Visit(src, d, true)).ToList());
 #else
-            return dst.Select(d => Visit(src, d, true)).ToList();
+            var result = new List<DstT>(dst.Count);
+            foreach (var destNode in dst)
+                result.Add(Visit(src, destNode, true));
+
+            return result;
 #endif
         }
 
@@ -300,7 +304,7 @@ namespace Internal.Metadata.NativeFormat.Writer
 
         internal override void Visit(IRecordVisitor visitor)
         {
-            ScopeDefinitions = visitor.Visit(this, ScopeDefinitions.AsEnumerable());
+            ScopeDefinitions = visitor.Visit(this, ScopeDefinitions);
         }
     }
 
@@ -435,7 +439,7 @@ namespace Internal.Metadata.NativeFormat.Writer
                     Log(keyValue.Value);
                 return dst as Dictionary<string, DstT>;
             }
-            public List<DstT> Visit<SrcT, DstT>(SrcT src, IEnumerable<DstT> dst) where SrcT : MetadataRecord where DstT : MetadataRecord
+            public List<DstT> Visit<SrcT, DstT>(SrcT src, List<DstT> dst) where SrcT : MetadataRecord where DstT : MetadataRecord
             {
                 foreach (var elem in dst)
                     Log(elem);
@@ -822,11 +826,15 @@ namespace Internal.Metadata.NativeFormat.Writer
         }
     }
 
-    public partial class ParameterTypeSignature
+    public partial class MethodInstantiation
     {
         public override string ToString()
         {
-            return Type.ToString();
+            return Method.ToString()
+                + "(Arguments: "
+                + "<"
+                + String.Join(", ", this.GenericTypeArguments.Select(ga => ga.ToString()))
+                + ">";
         }
     }
 
@@ -835,14 +843,6 @@ namespace Internal.Metadata.NativeFormat.Writer
         public override string ToString()
         {
             return "ref " + Type.ToString();
-        }
-    }
-
-    public partial class ReturnTypeSignature
-    {
-        public override string ToString()
-        {
-            return Type.ToString();
         }
     }
 
@@ -902,7 +902,7 @@ namespace Internal.Metadata.NativeFormat.Writer
     {
         public override string ToString()
         {
-            return Parent.ToString() + "." + Name.Value;
+            return Parent.ToString() + "." + Name.Value + " (Signature: " + Signature.ToString() + ")";
         }
     }
 
@@ -921,6 +921,7 @@ namespace Internal.Metadata.NativeFormat.Writer
         {
             return ToString(" ");
         }
+
         public string ToString(string name)
         {
             return String.Join(" ", new string[] {
@@ -938,7 +939,7 @@ namespace Internal.Metadata.NativeFormat.Writer
         public override string ToString()
         {
             return String.Join(" ", Enum.GetName(typeof(CallingConventions), CallingConvention),
-                ToString(CustomModifiers, " "), Type.ToString()) + "(" + ToString(Parameters) + ")";
+                Type.ToString()) + "(" + ToString(Parameters) + ")";
         }
     }
 
@@ -946,15 +947,16 @@ namespace Internal.Metadata.NativeFormat.Writer
     {
         public override string ToString()
         {
-            return ToString(CustomModifiers, " ") + Type.ToString();
+            return Type.ToString();
         }
     }
 
-    public partial class CustomModifier
+    public partial class ModifiedType
     {
         public override string ToString()
         {
-            return "[" + (IsOptional ? "opt : " : "req : ") + Type.ToString() + "]";
+            return "[" + (IsOptional ? "opt : " : "req : ") + ModifierType.ToString() + "] " +
+                Type.ToString();
         }
     }
 

@@ -9,13 +9,8 @@
 //    This class defines a set of static methods that provide support for compilers.
 //
 
-using System;
-using System.Runtime;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Threading;
-
 using Internal.Runtime.Augments;
+using System.Threading;
 
 namespace System.Runtime.CompilerServices
 {
@@ -32,6 +27,7 @@ namespace System.Runtime.CompilerServices
             IntPtr pStaticClassConstructionContext = RuntimeAugments.Callbacks.TryGetStaticClassConstructionContext(type);
             if (pStaticClassConstructionContext == IntPtr.Zero)
                 return;
+
             unsafe
             {
                 ClassConstructorRunner.EnsureClassConstructorRun((StaticClassConstructionContext*)pStaticClassConstructionContext);
@@ -50,13 +46,15 @@ namespace System.Runtime.CompilerServices
             return RuntimeImports.RhMemberwiseClone(obj);
         }
 
+#if !FEATURE_SYNCTABLE
         private const int HASHCODE_BITS = 26;
-        private const int MASK_HASHCODE = (1 << (int)HASHCODE_BITS) - 1;
+        private const int MASK_HASHCODE = (1 << HASHCODE_BITS) - 1;
+#endif
 
         [ThreadStatic]
         private static int t_hashSeed;
 
-        private static int GetNewHashCode()
+        internal static int GetNewHashCode()
         {
             int multiplier = Environment.CurrentManagedThreadId * 4 + 5;
             // Every thread has its own generator for hash codes so that we won't get into a situation
@@ -68,6 +66,9 @@ namespace System.Runtime.CompilerServices
 
         public static unsafe int GetHashCode(Object o)
         {
+#if FEATURE_SYNCTABLE
+            return ObjectHeader.GetHashCode(o);
+#else
             if (o == null)
                 return 0;
 
@@ -81,8 +82,10 @@ namespace System.Runtime.CompilerServices
                 else
                     return hash;
             }
+#endif
         }
 
+#if !FEATURE_SYNCTABLE
         private static unsafe int MakeHashCode(Object o, int* pSyncBlockIndex)
         {
             int hash = GetNewHashCode() & MASK_HASHCODE;
@@ -110,8 +113,9 @@ namespace System.Runtime.CompilerServices
                 // other bits.  Let's try again.
             }
 
-            return (int)hash;
+            return hash;
         }
+#endif
 
         public static int OffsetToStringData
         {
@@ -123,10 +127,6 @@ namespace System.Runtime.CompilerServices
                 return String.FIRST_CHAR_OFFSET;
             }
         }
-
-        // unchecked cast, performs no dynamic type checking
-        [Intrinsic]
-        internal static extern T UncheckedCast<T>(Object value) where T : class;
 
         [ThreadStatic]
         private static unsafe byte* t_sufficientStackLimit;
@@ -142,29 +142,26 @@ namespace System.Runtime.CompilerServices
                 throw new InsufficientExecutionStackException();
         }
 
+        public static unsafe bool TryEnsureSufficientExecutionStack()
+        {
+            byte* limit = t_sufficientStackLimit;
+            if (limit == null)
+                limit = GetSufficientStackLimit();
+
+            byte* currentStackPtr = (byte*)(&limit);
+            return (currentStackPtr >= limit);
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)] // Only called once per thread, no point in inlining.
         private static unsafe byte* GetSufficientStackLimit()
         {
-            //
-            // We rely on the fact that Windows allocates a thread's stack in a single allocation.  Thus we can call VirtualQuery on any 
-            // address on the stack, and the returned info will give the extents of the entire stack.
-            //
-            // We need to first ensure that the current stack page has been written to, so that it has the same attributes all higher stack pages.
-            // This way info.RegionSize will include the whole stack written so far.
-            //
-            Interop.mincore.MEMORY_BASIC_INFORMATION info = new Interop.mincore.MEMORY_BASIC_INFORMATION();
-            Volatile.Write(ref info.BaseAddress, IntPtr.Zero); // Extra paranoid write, to avoid optimizations.
-
-            Interop.mincore.VirtualQuery((IntPtr)(&info), out info, (UIntPtr)(uint)sizeof(Interop.mincore.MEMORY_BASIC_INFORMATION));
-
-            byte* lower = (byte*)info.AllocationBase;
-            byte* upper = (byte*)info.BaseAddress + info.RegionSize.ToUInt64();
+            IntPtr lower, upper;
+            RuntimeImports.RhGetCurrentThreadStackBounds(out lower, out upper);
 
             //
             // We consider half of the stack to be "sufficient."
             //
-            t_sufficientStackLimit = lower + ((upper - lower) / 2);
-            return t_sufficientStackLimit;
+            return (t_sufficientStackLimit = (byte*)lower + (((byte*)upper - (byte*)lower) / 2));
         }
     }
 }

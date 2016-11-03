@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using Internal.Reflection.Extensibility;
 using Debug = global::System.Diagnostics.Debug;
@@ -33,72 +34,10 @@ namespace Internal.Reflection.Execution
             }
         }
 
-        private class InstantiatedType : ExtensibleType, IReflectableType
-        {
-            private InstantiatedTypeInfo _typeInfo;
-
-            public InstantiatedType(InstantiatedTypeInfo typeInfo)
-            {
-                _typeInfo = typeInfo;
-            }
-
-            TypeInfo IReflectableType.GetTypeInfo()
-            {
-                return _typeInfo;
-            }
-
-            //
-            // These methods can't be overriden on TypeInfo directly
-            //
-            public override bool IsArray
-            {
-                get
-                {
-                    return _typeInfo.UnderlyingTypeInfo.IsArray;
-                }
-            }
-
-            public override bool IsByRef
-            {
-                get
-                {
-                    return _typeInfo.UnderlyingTypeInfo.IsByRef;
-                }
-            }
-
-            public override bool IsPointer
-            {
-                get
-                {
-                    return _typeInfo.UnderlyingTypeInfo.IsPointer;
-                }
-            }
-
-            public override String AssemblyQualifiedName { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
-            public override String FullName { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
-            public override int GenericParameterPosition { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
-            public override Type[] GenericTypeArguments { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
-            public override bool IsConstructedGenericType { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
-            public override bool IsGenericParameter { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
-            public override int GetArrayRank() { Debug.Assert(false); throw NotImplemented.ByDesign; }
-            public override Type GetElementType() { Debug.Assert(false); throw NotImplemented.ByDesign; }
-            public override Type GetGenericTypeDefinition() { Debug.Assert(false); throw NotImplemented.ByDesign; }
-            public override Type MakeArrayType() { Debug.Assert(false); throw NotImplemented.ByDesign; }
-            public override Type MakeArrayType(int rank) { Debug.Assert(false); throw NotImplemented.ByDesign; }
-            public override Type MakeByRefType() { Debug.Assert(false); throw NotImplemented.ByDesign; }
-            public override Type MakeGenericType(params Type[] instantiation) { Debug.Assert(false); throw NotImplemented.ByDesign; }
-            public override Type MakePointerType() { Debug.Assert(false); throw NotImplemented.ByDesign; }
-            public override Type DeclaringType { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
-            public override string Namespace { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
-            public override String Name { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
-        }
-
         private class InstantiatedTypeInfo : ExtensibleTypeInfo
         {
             private TypeInfo _underlyingTypeInfo;
             private SigTypeContext _context;
-
-            private InstantiatedType _type;
 
             public InstantiatedTypeInfo(TypeInfo underlyingTypeInfo, SigTypeContext context)
             {
@@ -116,9 +55,7 @@ namespace Internal.Reflection.Execution
 
             public override Type AsType()
             {
-                if (_type == null)
-                    _type = new InstantiatedType(this);
-                return _type;
+                return this;
             }
 
             public override TypeAttributes Attributes
@@ -137,6 +74,14 @@ namespace Internal.Reflection.Execution
                     {
                         yield return iface.GetTypeInfo().Instantiate(_context).AsType();
                     }
+                }
+            }
+
+            public override bool IsConstructedGenericType
+            {
+                get
+                {
+                    return _underlyingTypeInfo.IsConstructedGenericType;
                 }
             }
 
@@ -201,11 +146,25 @@ namespace Internal.Reflection.Execution
             public override String FullName { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
             public override GenericParameterAttributes GenericParameterAttributes { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
             public override int GenericParameterPosition { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
+            public override ConstructorInfo[] GetConstructors(BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override EventInfo GetEvent(string name, BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override EventInfo[] GetEvents(BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override FieldInfo GetField(string name, BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override FieldInfo[] GetFields(BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override Type GetInterface(string name, bool ignoreCase) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override Type[] GetInterfaces() { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override MemberInfo[] GetMembers(BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override MethodInfo[] GetMethods(BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override Type GetNestedType(string name, BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override Type[] GetNestedTypes(BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            public override PropertyInfo[] GetProperties(BindingFlags bindingAttr) { Debug.Assert(false); throw NotImplemented.ByDesign; }
             public override Guid GUID { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
+            public override object InvokeMember(string name, BindingFlags invokeAttr, Binder binder, object target, object[] args, ParameterModifier[] modifiers, CultureInfo culture, string[] namedParameters) { Debug.Assert(false); throw NotImplemented.ByDesign; }
             public override bool IsEnum { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
             public override bool IsGenericParameter { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
             public override bool IsGenericTypeDefinition { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
             public override bool IsSerializable { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
+            public override Module Module { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
             public override String Namespace { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
             public override Type[] GetGenericParameterConstraints() { Debug.Assert(false); throw NotImplemented.ByDesign; }
             public sealed override Type MakeArrayType() { Debug.Assert(false); throw NotImplemented.ByDesign; }
@@ -215,6 +174,25 @@ namespace Internal.Reflection.Execution
             public sealed override Type MakePointerType() { Debug.Assert(false); throw NotImplemented.ByDesign; }
             public override Type DeclaringType { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
             public sealed override String Name { get { Debug.Assert(false); throw NotImplemented.ByDesign; } }
+
+            protected override ConstructorInfo GetConstructorImpl(BindingFlags bindingAttr, Binder binder, CallingConventions callConvention, Type[] types, ParameterModifier[] modifiers) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            protected override MethodInfo GetMethodImpl(string name, BindingFlags bindingAttr, Binder binder, CallingConventions callConvention, Type[] types, ParameterModifier[] modifiers) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+            protected override PropertyInfo GetPropertyImpl(string name, BindingFlags bindingAttr, Binder binder, Type returnType, Type[] types, ParameterModifier[] modifiers) { Debug.Assert(false); throw NotImplemented.ByDesign; }
+
+            protected override bool IsArrayImpl()
+            {
+                return _underlyingTypeInfo.IsArray;
+            }
+
+            protected override bool IsByRefImpl()
+            {
+                return _underlyingTypeInfo.IsByRef;
+            }
+
+            protected override bool IsPointerImpl()
+            {
+                return _underlyingTypeInfo.IsPointer;
+            }
         }
 
         private static TypeInfo Instantiate(this TypeInfo type, SigTypeContext context)
@@ -309,7 +287,7 @@ namespace Internal.Reflection.Execution
 
             foreach (var ctor in type.DeclaredConstructors)
             {
-                if (!ctor.IsStatic && ctor.IsPublic && ctor.GetParameters().Length == 0)
+                if (!ctor.IsStatic && ctor.IsPublic && ctor.GetParametersNoCopy().Length == 0)
                     return true;
             }
             return false;

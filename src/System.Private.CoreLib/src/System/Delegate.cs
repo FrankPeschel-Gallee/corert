@@ -4,11 +4,12 @@
 
 using System.Text;
 using System.Runtime;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
-using Internal.Runtime.CompilerServices;
 using Internal.Runtime.Augments;
+using Internal.Runtime.CompilerServices;
 
 namespace System
 {
@@ -18,7 +19,7 @@ namespace System
     // sequential layout directive so that Bartok matches it.
     [StructLayout(LayoutKind.Sequential)]
     [DebuggerDisplay("Target method(s) = {GetTargetMethodsDescriptionForDebugger()}")]
-    public abstract class Delegate
+    public abstract partial class Delegate : ICloneable
     {
         // This ctor exists solely to prevent C# from generating a protected .ctor that violates the surface area. I really want this to be a
         // "protected-and-internal" rather than "internal" but C# has no keyword for the former.
@@ -31,9 +32,9 @@ namespace System
 
         internal protected object m_firstParameter;
         internal protected object m_helperObject;
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA2111:PointersShouldNotBeVisible")]  
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA2111:PointersShouldNotBeVisible")]
         internal protected IntPtr m_extraFunctionPointerOrData;
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA2111:PointersShouldNotBeVisible")]  
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA2111:PointersShouldNotBeVisible")]
         internal protected IntPtr m_functionPointer;
 
         [ThreadStatic]
@@ -52,7 +53,7 @@ namespace System
 
         //
         // If the thunk does not exist, the function will return IntPtr.Zero.
-        protected virtual IntPtr GetThunk(int whichThunk) 
+        protected virtual IntPtr GetThunk(int whichThunk)
         {
 #if DEBUG
             // The GetThunk function should be overriden on all delegate types, except for universal
@@ -161,36 +162,7 @@ namespace System
                 m_helperObject = firstParameter;
             }
         }
-
-        // This function is known to the IL Transformer.
-        protected void InitializeClosedInstanceWithGVMResolution(object firstParameter, RuntimeMethodHandle tokenOfGenericVirtualMethod)
-        {
-            if (firstParameter == null)
-                throw new ArgumentException(SR.Arg_DlgtNullInst);
-
-            IntPtr functionResolution = TypeLoaderExports.GVMLookupForSlot(firstParameter, tokenOfGenericVirtualMethod);
-
-            if (functionResolution == IntPtr.Zero)
-            {
-                // TODO! What to do when GVM resolution fails. Should never happen
-                throw new InvalidOperationException();
-            }
-            if (!FunctionPointerOps.IsGenericMethodPointer(functionResolution))
-            {
-                m_functionPointer = functionResolution;
-                m_firstParameter = firstParameter;
-            }
-            else
-            {
-                m_firstParameter = this;
-                m_functionPointer = GetThunk(ClosedInstanceThunkOverGenericMethod);
-                m_extraFunctionPointerOrData = functionResolution;
-                m_helperObject = firstParameter;
-            }
-
-            return;
-        }
-
+        
         // This is used to implement MethodInfo.CreateDelegate() in a desktop-compatible way. Yes, the desktop really
         // let you use that api to invoke an instance method with a null 'this'.
         private void InitializeClosedInstanceWithoutNullCheck(object firstParameter, IntPtr functionPointer)
@@ -209,7 +181,7 @@ namespace System
             }
         }
 
-        // This function is known to the IL Transformer.
+        // This function is known to the compiler backend.
         protected void InitializeClosedStaticThunk(object firstParameter, IntPtr functionPointer, IntPtr functionPointerThunk)
         {
             m_extraFunctionPointerOrData = functionPointer;
@@ -218,8 +190,17 @@ namespace System
             m_firstParameter = this;
         }
 
-        // This function is known to the IL Transformer.
-        protected void InitializeOpenStaticThunk(IntPtr functionPointer, IntPtr functionPointerThunk)
+        // This function is known to the compiler backend.
+        protected void InitializeClosedStaticWithoutThunk(object firstParameter, IntPtr functionPointer)
+        {
+            m_extraFunctionPointerOrData = functionPointer;
+            m_helperObject = firstParameter;
+            m_functionPointer = GetThunk(ClosedStaticThunk);
+            m_firstParameter = this;
+        }
+
+        // This function is known to the compiler backend.
+        protected void InitializeOpenStaticThunk(object firstParameter, IntPtr functionPointer, IntPtr functionPointerThunk)
         {
             // This sort of delegate is invoked by calling the thunk function pointer with the arguments to the delegate + a reference to the delegate object itself.
             m_firstParameter = this;
@@ -227,12 +208,49 @@ namespace System
             m_extraFunctionPointerOrData = functionPointer;
         }
 
-        // This function is known to the IL Transformer.
-        protected void InitializeOpenInstanceThunk(IntPtr functionPointer, IntPtr functionPointerThunk)
+        // This function is known to the compiler backend.
+        protected void InitializeOpenStaticWithoutThunk(object firstParameter, IntPtr functionPointer)
+        {
+            // This sort of delegate is invoked by calling the thunk function pointer with the arguments to the delegate + a reference to the delegate object itself.
+            m_firstParameter = this;
+            m_functionPointer = GetThunk(OpenStaticThunk);
+            m_extraFunctionPointerOrData = functionPointer;
+        }
+
+        // This function is known to the compiler backend.
+        protected void InitializeReversePInvokeThunk(object firstParameter, IntPtr functionPointer, IntPtr functionPointerThunk)
         {
             // This sort of delegate is invoked by calling the thunk function pointer with the arguments to the delegate + a reference to the delegate object itself.
             m_firstParameter = this;
             m_functionPointer = functionPointerThunk;
+            m_extraFunctionPointerOrData = functionPointer;
+        }
+
+        // This function is known to the compiler backend.
+        protected void InitializeReversePInvokeWithoutThunk(object firstParameter, IntPtr functionPointer)
+        {
+            // This sort of delegate is invoked by calling the thunk function pointer with the arguments to the delegate + a reference to the delegate object itself.
+            m_firstParameter = this;
+            m_functionPointer = GetThunk(ReversePinvokeThunk);
+            m_extraFunctionPointerOrData = functionPointer;
+        }
+
+        // This function is known to the compiler backend.
+        protected void InitializeOpenInstanceThunk(object firstParameter, IntPtr functionPointer, IntPtr functionPointerThunk)
+        {
+            // This sort of delegate is invoked by calling the thunk function pointer with the arguments to the delegate + a reference to the delegate object itself.
+            m_firstParameter = this;
+            m_functionPointer = functionPointerThunk;
+            OpenMethodResolver instanceMethodResolver = new OpenMethodResolver(default(RuntimeTypeHandle), functionPointer, 0);
+            m_extraFunctionPointerOrData = instanceMethodResolver.ToIntPtr();
+        }
+
+        // This function is known to the compiler backend.
+        protected void InitializeOpenInstanceWithoutThunk(object firstParameter, IntPtr functionPointer, IntPtr functionPointerThunk)
+        {
+            // This sort of delegate is invoked by calling the thunk function pointer with the arguments to the delegate + a reference to the delegate object itself.
+            m_firstParameter = this;
+            m_functionPointer = GetThunk(OpenInstanceThunk);
             OpenMethodResolver instanceMethodResolver = new OpenMethodResolver(default(RuntimeTypeHandle), functionPointer, 0);
             m_extraFunctionPointerOrData = instanceMethodResolver.ToIntPtr();
         }
@@ -284,17 +302,7 @@ namespace System
             else
             {
                 IntPtr invokeThunk = this.GetThunk(DelegateInvokeThunk);
-
-                // The LoadDefaultValueString() has the following contract
-                // If it returns false, the delegate invoke does not have default values.
-                // If it returns true, then the s_DefaultValueString variable is set to 
-                // describe the default values for this invoke.
-                string defaultValueString = null;
-                if (LoadDefaultValueString())
-                {
-                    defaultValueString = s_DefaultValueString;
-                }
-                return System.InvokeUtils.CallDynamicInvokeMethod(this.m_firstParameter, this.m_functionPointer, this, invokeThunk, IntPtr.Zero, defaultValueString, args);
+                return System.InvokeUtils.CallDynamicInvokeMethod(this.m_firstParameter, this.m_functionPointer, this, invokeThunk, IntPtr.Zero, this, args);
             }
         }
 
@@ -622,6 +630,19 @@ namespace System
             return del;
         }
 
+        public MethodInfo Method
+        {
+            get
+            {
+                return GetMethodImpl();
+            }
+        }
+
+        protected virtual MethodInfo GetMethodImpl()
+        {
+            return RuntimeAugments.Callbacks.GetDelegateMethod(this);
+        }
+
         public override bool Equals(Object obj)
         {
             // It is expected that all real uses of the Equals method will hit the MulticastDelegate.Equals logic instead of this
@@ -673,6 +694,11 @@ namespace System
                 // Closed instance delegates place a value in m_firstParameter, and we've ruled out all other types of delegates
                 return m_firstParameter;
             }
+        }
+
+        public virtual object Clone()
+        {
+            return MemberwiseClone();
         }
 
         internal bool IsOpenStatic
@@ -735,7 +761,7 @@ namespace System
                 if (isOpen)
                 {
                     IntPtr thunk = del.GetThunk(Delegate.OpenStaticThunk);
-                    del.InitializeOpenStaticThunk(ldftnResult, thunk);
+                    del.InitializeOpenStaticThunk(null, ldftnResult, thunk);
                 }
                 else
                 {

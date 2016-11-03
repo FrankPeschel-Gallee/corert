@@ -139,12 +139,6 @@ PTFF_RAX_IS_GCREF       equ 00010000h   ;; iff PTFF_SAVE_RAX: set -> eax is Obje
 PTFF_RAX_IS_BYREF       equ 00020000h   ;; iff PTFF_SAVE_RAX: set -> eax is ByRef, clear -> eax is Object or scalar
 
 ;;
-;; Offset from FP (ebp) where the managed callout thunk (ManagedCallout2 and possibly others in the future)
-;; store a pointer to a transition frame.
-;;
-MANAGED_CALLOUT_THUNK_TRANSITION_FRAME_POINTER_OFFSET equ -4
-
-;;
 ;; Rename fields of nested structs
 ;;
 OFFSETOF__Thread__m_alloc_context__alloc_ptr        equ OFFSETOF__Thread__m_rgbAllocContextBuffer + OFFSETOF__alloc_context__alloc_ptr
@@ -154,7 +148,7 @@ OFFSETOF__Thread__m_alloc_context__alloc_limit      equ OFFSETOF__Thread__m_rgbA
 ;; CONSTANTS -- SYMBOLS
 ;;
 
-PALDEBUGBREAK                               equ ?PalDebugBreak@@YGXXZ
+RhDebugBreak                                equ @RhDebugBreak@0
 RhpGcAlloc                                  equ @RhpGcAlloc@16
 G_LOWEST_ADDRESS                            equ _g_lowest_address
 G_HIGHEST_ADDRESS                           equ _g_highest_address
@@ -176,7 +170,7 @@ endif ;; FEATURE_GC_STRESS
 ;; IMPORTS
 ;;
 EXTERN RhpGcAlloc                               : PROC
-EXTERN PALDEBUGBREAK                            : PROC
+EXTERN RhDebugBreak                             : PROC
 EXTERN RhpWaitForSuspend2                       : PROC
 EXTERN RhpWaitForGC2                            : PROC
 EXTERN RhpReversePInvokeAttachOrTrapThread2     : PROC

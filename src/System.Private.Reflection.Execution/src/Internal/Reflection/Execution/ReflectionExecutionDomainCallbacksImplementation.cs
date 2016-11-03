@@ -2,20 +2,21 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Text;
-using global::System.Reflection;
-using global::System.Collections.Generic;
+using System;
+using System.Text;
+using System.Reflection;
+using System.Collections.Generic;
 
-using global::Internal.Metadata.NativeFormat;
+using Internal.Metadata.NativeFormat;
 
-using global::Internal.Runtime.Augments;
-using global::Internal.Runtime.TypeLoader;
+using Internal.Runtime.Augments;
+using Internal.Runtime.TypeLoader;
 
-using global::Internal.Reflection.Core;
-using global::Internal.Reflection.Core.Execution;
-using global::Internal.Reflection.Core.Execution.Binder;
-using global::Internal.Reflection.Execution.PayForPlayExperience;
+using Internal.Reflection.Core.Execution;
+using Internal.Reflection.Execution.PayForPlayExperience;
+using Internal.Reflection.Extensions.NonPortable;
+
+using Debug = System.Diagnostics.Debug;
 
 namespace Internal.Reflection.Execution
 {
@@ -70,7 +71,7 @@ namespace Internal.Reflection.Execution
                 // The default binder rules allow omitting optional parameters but Activator.CreateInstance() doesn't. Thus, if the # of arguments doesn't match
                 // the # of parameters, do the pre-verification that the desktop does and ensure that the method has a "params" argument and that the argument count
                 // isn't shorter by more than one.
-                ParameterInfo[] parameters = constructor.GetParameters();
+                ParameterInfo[] parameters = constructor.GetParametersNoCopy();
                 if (args.Length != parameters.Length)
                 {
                     if (args.Length < parameters.Length - 1)
@@ -101,54 +102,17 @@ namespace Internal.Reflection.Execution
                 throw new MissingMethodException(SR.Format(SR.MissingConstructor_Name, type));
 
             MethodBase[] candidatesArray = candidates.ToArray();
-            ConstructorInfo match = (ConstructorInfo)(DefaultBinder.BindToMethod(candidatesArray, ref args));
+            Binder binder = Type.DefaultBinder;
+            object ignore;
+            BindingFlags bindingAttr = BindingFlags.Instance | BindingFlags.Public | BindingFlags.CreateInstance;
+            ConstructorInfo match = (ConstructorInfo)binder.BindToMethod(bindingAttr, candidatesArray, ref args, null, null, null, out ignore);
             Object newObject = match.Invoke(args);
             return newObject;
         }
 
-        public sealed override Type GetType(String typeName, bool throwOnError, bool ignoreCase)
+        public sealed override Type GetType(string typeName, Func<AssemblyName, Assembly> assemblyResolver, Func<Assembly, string, bool, Type> typeResolver, bool throwOnError, bool ignoreCase)
         {
-            return _executionDomain.GetType(typeName, throwOnError, ignoreCase, ReflectionExecution.DefaultAssemblyNamesForGetType);
-        }
-
-        public sealed override bool TryGetArrayTypeForElementType(RuntimeTypeHandle elementTypeHandle, out RuntimeTypeHandle arrayTypeHandle)
-        {
-            return _executionEnvironment.TryGetArrayTypeForElementType(elementTypeHandle, out arrayTypeHandle);
-        }
-
-        public sealed override bool TryGetArrayTypeElementType(RuntimeTypeHandle arrayTypeHandle, out RuntimeTypeHandle elementTypeHandle)
-        {
-            return _executionEnvironment.TryGetArrayTypeElementType(arrayTypeHandle, out elementTypeHandle);
-        }
-
-        public sealed override bool TryGetMultiDimArrayTypeForElementType(RuntimeTypeHandle elementTypeHandle, int rank, out RuntimeTypeHandle arrayTypeHandle)
-        {
-            return _executionEnvironment.TryGetMultiDimArrayTypeForElementType(elementTypeHandle, rank, out arrayTypeHandle);
-        }
-
-        public sealed override bool TryGetMultiDimArrayTypeElementType(RuntimeTypeHandle arrayTypeHandle, int rank, out RuntimeTypeHandle elementTypeHandle)
-        {
-            return _executionEnvironment.TryGetMultiDimArrayTypeElementType(arrayTypeHandle, rank, out elementTypeHandle);
-        }
-
-        public sealed override bool TryGetPointerTypeForTargetType(RuntimeTypeHandle targetTypeHandle, out RuntimeTypeHandle pointerTypeHandle)
-        {
-            return _executionEnvironment.TryGetPointerTypeForTargetType(targetTypeHandle, out pointerTypeHandle);
-        }
-
-        public sealed override bool TryGetPointerTypeTargetType(RuntimeTypeHandle pointerTypeHandle, out RuntimeTypeHandle targetTypeHandle)
-        {
-            return _executionEnvironment.TryGetPointerTypeTargetType(pointerTypeHandle, out targetTypeHandle);
-        }
-
-        public sealed override bool TryGetConstructedGenericTypeComponents(RuntimeTypeHandle runtimeTypeHandle, out RuntimeTypeHandle genericTypeDefinitionHandle, out RuntimeTypeHandle[] genericTypeArgumentHandles)
-        {
-            return _executionEnvironment.TryGetConstructedGenericTypeComponents(runtimeTypeHandle, out genericTypeDefinitionHandle, out genericTypeArgumentHandles);
-        }
-
-        public sealed override bool TryGetConstructedGenericTypeForComponents(RuntimeTypeHandle genericTypeDefinitionHandle, RuntimeTypeHandle[] genericTypeArgumentHandles, out RuntimeTypeHandle runtimeTypeHandle)
-        {
-            return _executionEnvironment.TryGetConstructedGenericTypeForComponents(genericTypeDefinitionHandle, genericTypeArgumentHandles, out runtimeTypeHandle);
+            return _executionDomain.GetType(typeName, assemblyResolver, typeResolver, throwOnError, ignoreCase, ReflectionExecution.DefaultAssemblyNamesForGetType);
         }
 
         public sealed override bool IsReflectionBlocked(RuntimeTypeHandle typeHandle)
@@ -161,28 +125,52 @@ namespace Internal.Reflection.Execution
             return _executionEnvironment.TryGetMetadataNameForRuntimeTypeHandle(rtth, out name);
         }
 
+        //=======================================================================================
+        // This group of methods jointly service the Type.GetTypeFromHandle() path. The caller
+        // is responsible for analyzing the RuntimeTypeHandle to figure out which flavor to call.
+        //=======================================================================================
+        public sealed override Type GetNamedTypeForHandle(RuntimeTypeHandle typeHandle, bool isGenericTypeDefinition)
+        {
+            return _executionDomain.GetNamedTypeForHandle(typeHandle, isGenericTypeDefinition);
+        }
+
+        public sealed override Type GetArrayTypeForHandle(RuntimeTypeHandle typeHandle)
+        {
+            return _executionDomain.GetArrayTypeForHandle(typeHandle);
+        }
+
+        public sealed override Type GetMdArrayTypeForHandle(RuntimeTypeHandle typeHandle, int rank)
+        {
+            return _executionDomain.GetMdArrayTypeForHandle(typeHandle, rank);
+        }
+
+        public sealed override Type GetPointerTypeForHandle(RuntimeTypeHandle typeHandle)
+        {
+            return _executionDomain.GetPointerTypeForHandle(typeHandle);
+        }
+
+        public sealed override Type GetConstructedGenericTypeForHandle(RuntimeTypeHandle typeHandle)
+        {
+            return _executionDomain.GetConstructedGenericTypeForHandle(typeHandle);
+        }
+
+        //=======================================================================================
+        // MissingMetadataException support.
+        //=======================================================================================
         public sealed override Exception CreateMissingMetadataException(Type pertainant)
         {
             return _executionDomain.CreateMissingMetadataException(pertainant);
         }
 
-        public sealed override Exception CreateMissingArrayTypeException(Type elementType, bool isMultiDim, int rank)
-        {
-            return MissingMetadataExceptionCreator.CreateMissingArrayTypeException(elementType, isMultiDim, rank);
-        }
-
-        public sealed override Exception CreateMissingConstructedGenericTypeException(Type genericTypeDefinition, Type[] genericTypeArguments)
-        {
-            return MissingMetadataExceptionCreator.CreateMissingConstructedGenericTypeException(genericTypeDefinition, genericTypeArguments);
-        }
-
-        public sealed override Type CreateShadowRuntimeInspectionOnlyNamedTypeIfAvailable(RuntimeTypeHandle runtimeTypeHandle)
-        {
-            return _executionDomain.CreateShadowRuntimeInspectionOnlyNamedTypeIfAvailable(runtimeTypeHandle);
-        }
-
         public sealed override EnumInfo GetEnumInfoIfAvailable(Type enumType)
         {
+            // Handle the weird case of an enum type nested under a generic type that makes the
+            // enum itself generic.
+            if (enumType.IsConstructedGenericType)
+            {
+                enumType = enumType.GetGenericTypeDefinition();
+            }
+
             MetadataReader reader;
             TypeDefinitionHandle typeDefinitionHandle;
             if (!ReflectionExecution.ExecutionEnvironment.TryGetMetadataForNamedType(enumType.TypeHandle, out reader, out typeDefinitionHandle))
@@ -229,7 +217,7 @@ namespace Internal.Reflection.Execution
             fullMethodName.Append('(');
 
             // get parameter list
-            ParameterInfo[] paramArr = methodBase.GetParameters();
+            ParameterInfo[] paramArr = methodBase.GetParametersNoCopy();
             for (int i = 0; i < paramArr.Length; ++i)
             {
                 if (i != 0)
@@ -415,6 +403,61 @@ namespace Internal.Reflection.Execution
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Retrieves the default value for a parameter of a method.
+        /// </summary>
+        /// <param name="defaultParametersContext">The default parameters context used to invoke the method,
+        /// this should identify the method in question. This is passed to the RuntimeAugments.CallDynamicInvokeMethod.</param>
+        /// <param name="thType">The type of the parameter to retrieve.</param>
+        /// <param name="argIndex">The index of the parameter on the method to retrieve.</param>
+        /// <param name="defaultValue">The default value of the parameter if available.</param>
+        /// <returns>true if the default parameter value is available, otherwise false.</returns>
+        public sealed override bool TryGetDefaultParameterValue(object defaultParametersContext, RuntimeTypeHandle thType, int argIndex, out object defaultValue)
+        {
+            defaultValue = null;
+
+            MethodBase methodInfo = defaultParametersContext as MethodBase;
+            if (methodInfo == null)
+            {
+                return false;
+            }
+
+            ParameterInfo parameterInfo = methodInfo.GetParametersNoCopy()[argIndex];
+            if (!parameterInfo.HasDefaultValue)
+            {
+                // If the parameter is optional, with no default value and we're asked for its default value,
+                // it means the caller specified Missing.Value as the value for the parameter. In this case the behavior
+                // is defined as passing in the Missing.Value, regardless of the parameter type.
+                // If Missing.Value is convertible to the parameter type, it will just work, otherwise we will fail
+                // due to type mismatch.
+                if (parameterInfo.IsOptional)
+                {
+                    defaultValue = Missing.Value;
+                    return true;
+                }
+
+                return false;
+            }
+
+            defaultValue = parameterInfo.DefaultValue;
+            return true;
+        }
+
+        public sealed override RuntimeTypeHandle GetTypeHandleIfAvailable(Type type)
+        {
+            return _executionDomain.GetTypeHandleIfAvailable(type);
+        }
+
+        public sealed override bool SupportsReflection(Type type)
+        {
+            return _executionDomain.SupportsReflection(type);
+        }
+
+        public sealed override MethodInfo GetDelegateMethod(Delegate del)
+        {
+            return DelegateMethodInfoRetriever.GetDelegateMethodInfo(del);
         }
 
         private ExecutionDomain _executionDomain;

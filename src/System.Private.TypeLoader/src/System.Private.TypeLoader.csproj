@@ -23,11 +23,9 @@
     <ReferencePath Include="$(AotPackageReferencePath)\System.Runtime.dll" />
     <ReferencePath Include="$(AotPackageReferencePath)\System.Runtime.Extensions.dll" />
     <ReferencePath Include="$(AotPackageReferencePath)\System.Resources.ResourceManager.dll" />
-    <ReferencePath Include="$(AotPackageReferencePath)\System.Reflection.Primitives.dll" />
     <ReferencePath Include="$(AotPackageReferencePath)\System.Reflection.dll" />
     <ReferencePath Include="$(AotPackageReferencePath)\System.IO.dll" />
     <ReferencePath Include="$(AotPackageReferencePath)\System.Collections.dll" />
-    <ReferencePath Include="$(AotPackageReferencePath)\System.Reflection.TypeExtensions.dll" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\System.Private.CoreLib\src\System.Private.CoreLib.csproj" />
@@ -49,7 +47,9 @@
       <Link>LowLevelDictionary.cs</Link>
     </Compile>
     <Compile Include="Internal\Runtime\TypeLoader\ExternalReferencesTable.cs" />
-    <Compile Include="Internal\Runtime\TypeLoader\LowLevelStringConverter.cs" />
+    <Compile Include="..\..\Common\src\Internal\Runtime\LowLevelStringConverter.cs" >
+      <Link>LowLevelStringConverter.cs</Link>
+    </Compile>
     <Compile Include="Internal\Runtime\TypeLoader\MetadataReaderExtensions.cs" />
     <Compile Include="Internal\Runtime\TypeLoader\MetadataTable.cs" />
     <Compile Include="Internal\Runtime\TypeLoader\ModuleList.cs" />

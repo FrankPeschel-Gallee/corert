@@ -5,7 +5,7 @@
 using System;
 using System.Runtime.CompilerServices;
 using System.Collections.Generic;
-using Internal.Reflection.Core.NonPortable;
+using Internal.Runtime.Augments;
 
 namespace System.Runtime.InteropServices
 {
@@ -292,7 +292,7 @@ namespace System.Runtime.InteropServices
 
         public static T UncheckedCast<T>(object obj) where T : class
         {
-            return RuntimeHelpers.UncheckedCast<T>(obj);
+            return Unsafe.As<T>(obj);
         }
 
         public static bool IsArray(RuntimeTypeHandle type)
@@ -448,29 +448,7 @@ namespace System.Runtime.InteropServices
 
         public static bool SupportsReflection(this Type type)
         {
-            RuntimeType runtimeType = type as RuntimeType;
-            if (runtimeType == null)
-                return false;
-
-            if (null == runtimeType.InternalNameIfAvailable)
-            {
-                return false;
-            }
-
-            if (Internal.Runtime.Augments.RuntimeAugments.Callbacks.IsReflectionBlocked(type.TypeHandle))
-            {
-                // The type is an internal framework type and is blocked from reflection
-                return false;
-            }
-
-            if (runtimeType.InternalFullNameOfAssembly == Internal.Runtime.Augments.RuntimeAugments.HiddenScopeAssemblyName)
-            {
-                // The type is an internal framework type but is reflectable for internal class library use
-                // where we make the type appear in a hidden assembly
-                return false;
-            }
-
-            return true;
+            return RuntimeAugments.Callbacks.SupportsReflection(type);
         }
 
         public static void SuppressReentrantWaits()
@@ -481,6 +459,16 @@ namespace System.Runtime.InteropServices
         public static void RestoreReentrantWaits()
         {
             System.Threading.LowLevelThread.RestoreReentrantWaits();
+        }
+
+        public static IntPtr MemAlloc(UIntPtr sizeInBytes)
+        {
+            return Interop.MemAlloc(sizeInBytes);
+        }
+
+        public static void MemFree(IntPtr allocatedMemory)
+        {
+            Interop.MemFree(allocatedMemory);
         }
     }
 }

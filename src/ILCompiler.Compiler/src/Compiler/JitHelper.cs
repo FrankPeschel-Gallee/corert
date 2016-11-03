@@ -27,7 +27,7 @@ namespace ILCompiler
                     mangledName = "RhpThrowEx";
                     break;
                 case ReadyToRunHelper.Rethrow:
-                    mangledName = "RhRethrow";
+                    mangledName = "RhpRethrow";
                     break;
 
                 case ReadyToRunHelper.Overflow:
@@ -44,6 +44,10 @@ namespace ILCompiler
                     break;
                 case ReadyToRunHelper.ThrowDivZero:
                     methodDesc = context.GetHelperEntryPoint("ThrowHelpers", "ThrowDivideByZeroException");
+                    break;
+
+                case ReadyToRunHelper.DebugBreak:
+                    mangledName = "RhDebugBreak";
                     break;
 
                 case ReadyToRunHelper.WriteBarrier:
@@ -175,7 +179,7 @@ namespace ILCompiler
 
         static public string GetCastingHelperNameForType(TypeDesc type, bool throwing)
         {
-            if (type.IsSzArray)
+            if (type.IsArray)
                 return throwing ? "RhTypeCast_CheckCastArray" : "RhTypeCast_IsInstanceOfArray";
 
             if (type.IsInterface)

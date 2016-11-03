@@ -2,8 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System;
-using System.Text;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 
 namespace System.Globalization
@@ -63,6 +62,7 @@ namespace System.Globalization
     // Gregorian to Hebrew Lunar from 1583 to 2239.
 
 
+    [Serializable]
     [System.Runtime.InteropServices.ComVisible(true)]
     public class HebrewCalendar : Calendar
     {
@@ -291,8 +291,6 @@ namespace System.Globalization
             0,30,30,30,29,30,30,29,30,29,30,29,30,29
         };
 
-        //internal static Calendar m_defaultInstance;
-
         internal static readonly DateTime calendarMinValue = new DateTime(1583, 1, 1);
         // Gregorian 2239/9/29 = Hebrew 5999/13/29 (last day in Hebrew year 5999).
         // We can only format/parse Hebrew numbers up to 999, so we limit the max range to Hebrew year 5999.
@@ -318,26 +316,6 @@ namespace System.Globalization
             }
         }
 
-        /*=================================GetDefaultInstance==========================
-        **Action: Internal method to provide a default intance of HebrewCalendar.  Used by NLS+ implementation
-        **       and other calendars.
-        **Returns:
-        **Arguments:
-        **Exceptions:
-        ============================================================================*/
-
-        /*
-        internal static Calendar GetDefaultInstance() {
-            if (m_defaultInstance == null) {
-                m_defaultInstance = new HebrewCalendar();
-            }
-            return (m_defaultInstance);
-        }
-        */
-
-
-        // Construct an instance of gregorian calendar.
-
         public HebrewCalendar()
         {
         }
@@ -361,7 +339,7 @@ namespace System.Globalization
         **  We use a table for the Hebrew calendar calculation, so the year supported is limited.
         ============================================================================*/
 
-        static private void CheckHebrewYearValue(int y, int era, String varName)
+        private static void CheckHebrewYearValue(int y, int era, String varName)
         {
             CheckEraRange(era);
             if (y > MaxHebrewYear || y < MinHebrewYear)
@@ -427,7 +405,7 @@ namespace System.Globalization
             }
         }
 
-        static internal void CheckEraRange(int era)
+        internal static void CheckEraRange(int era)
         {
             if (era != CurrentEra && era != HebrewEra)
             {
@@ -435,7 +413,7 @@ namespace System.Globalization
             }
         }
 
-        static private void CheckTicksRange(long ticks)
+        private static void CheckTicksRange(long ticks)
         {
             if (ticks < calendarMinValue.Ticks || ticks > calendarMaxValue.Ticks)
             {
@@ -450,7 +428,7 @@ namespace System.Globalization
             }
         }
 
-        static internal int GetResult(__DateBuffer result, int part)
+        internal static int GetResult(__DateBuffer result, int part)
         {
             switch (part)
             {
@@ -482,7 +460,7 @@ namespace System.Globalization
         **Exceptions:
         ============================================================================*/
 
-        static internal int GetLunarMonthDay(int gregorianYear, __DateBuffer lunarDate)
+        internal static int GetLunarMonthDay(int gregorianYear, __DateBuffer lunarDate)
         {
             //
             //  Get the offset into the LunarMonthLen array and the lunar day
@@ -616,7 +594,7 @@ namespace System.Globalization
             //  is true.
             //
             NumDays -= (long)(s_lunarMonthLen[hebrewYearType * MaxMonthPlusOne + lunarDate.month] - lunarDate.day);
-            Contract.Assert(NumDays >= 1, "NumDays >= 1");
+            Debug.Assert(NumDays >= 1, "NumDays >= 1");
 
             // If NumDays is 1, then we are done.  Otherwise, find the correct Hebrew month
             // and day.
@@ -790,7 +768,7 @@ namespace System.Globalization
             return ((DayOfWeek)((int)(time.Ticks / TicksPerDay + 1) % 7));
         }
 
-        static internal int GetHebrewYearType(int year, int era)
+        internal static int GetHebrewYearType(int year, int era)
         {
             CheckHebrewYearValue(year, era, "year");
             // The HebrewTable is indexed by Gregorian year and starts from FirstGregorianYear.
@@ -840,7 +818,7 @@ namespace System.Globalization
             int hebrewYearType = GetHebrewYearType(year, era);
             CheckHebrewMonthValue(year, month, era);
 
-            Contract.Assert(hebrewYearType >= 1 && hebrewYearType <= 6,
+            Debug.Assert(hebrewYearType >= 1 && hebrewYearType <= 6,
                 "hebrewYearType should be from  1 to 6, but now hebrewYearType = " + hebrewYearType + " for hebrew year " + year);
             int monthDays = s_lunarMonthLen[hebrewYearType * MaxMonthPlusOne + month];
             if (monthDays == 0)

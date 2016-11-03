@@ -65,7 +65,7 @@ namespace System
         {
             get
             {
-                return (EEType *)m_pEEType;
+                return (EEType*)m_pEEType;
             }
         }
 
@@ -74,14 +74,12 @@ namespace System
             Debug.Assert(EEType->IsArray, "this is only supported on arrays");
 
             // m_numComponents is an int field that is directly after _pEEType
-            fixed (IntPtr * ptr = &m_pEEType)
+            fixed (IntPtr* ptr = &m_pEEType)
                 return *(int*)(ptr + 1);
         }
 #endif
 
-#if CORERT
         [Intrinsic]
-#endif
         public Type GetType()
         {
             return ReflectionCoreNonPortable.GetRuntimeTypeForEEType(EETypePtr);
@@ -157,6 +155,19 @@ namespace System
         protected object MemberwiseClone()
         {
             return RuntimeImports.RhMemberwiseClone(this);
+        }
+
+        private class RawData
+        {
+// Suppress bogus warning - remove once https://github.com/dotnet/roslyn/issues/10544 is fixed
+#pragma warning disable 649
+            public byte Data;
+#pragma warning restore
+        }
+
+        internal ref byte GetRawData()
+        {
+            return ref Unsafe.As<RawData>(this).Data;
         }
     }
 }

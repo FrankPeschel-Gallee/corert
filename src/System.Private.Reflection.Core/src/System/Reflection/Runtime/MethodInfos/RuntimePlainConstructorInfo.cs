@@ -2,19 +2,20 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Reflection;
-using global::System.Diagnostics;
-using global::System.Collections.Generic;
-using global::System.Reflection.Runtime.TypeInfos;
-using global::System.Reflection.Runtime.ParameterInfos;
+using System;
+using System.Reflection;
+using System.Diagnostics;
+using System.Globalization;
+using System.Collections.Generic;
+using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.TypeInfos;
+using System.Reflection.Runtime.ParameterInfos;
 
-using global::Internal.Reflection.Core.Execution;
-using global::Internal.Reflection.Core.NonPortable;
+using Internal.Reflection.Core.Execution;
 
-using global::Internal.Reflection.Tracing;
+using Internal.Reflection.Tracing;
 
-using global::Internal.Metadata.NativeFormat;
+using Internal.Metadata.NativeFormat;
 
 namespace System.Reflection.Runtime.MethodInfos
 {
@@ -89,12 +90,14 @@ namespace System.Reflection.Runtime.MethodInfos
             }
         }
 
-        public sealed override Object Invoke(Object[] parameters)
+        public sealed override object Invoke(BindingFlags invokeAttr, Binder binder, object[] parameters, CultureInfo culture)
         {
 #if ENABLE_REFLECTION_TRACE
             if (ReflectionTrace.Enabled)
                 ReflectionTrace.ConstructorInfo_Invoke(this, parameters);
 #endif
+            if (invokeAttr != BindingFlags.Default || binder != null || culture != null)
+                throw new NotImplementedException();
 
             if (parameters == null)
                 parameters = Array.Empty<Object>();
@@ -134,7 +137,7 @@ namespace System.Reflection.Runtime.MethodInfos
             RuntimePlainConstructorInfo other = obj as RuntimePlainConstructorInfo;
             if (other == null)
                 return false;
-            return this._common.Equals(other._common);
+            return _common.Equals(other._common);
         }
 
         public sealed override int GetHashCode()
@@ -144,14 +147,15 @@ namespace System.Reflection.Runtime.MethodInfos
 
         public sealed override String ToString()
         {
-            return _common.ComputeToString(this, Array.Empty<RuntimeType>());
+            return _common.ComputeToString(this, Array.Empty<RuntimeTypeInfo>());
         }
 
-        protected sealed override RuntimeParameterInfo[] RuntimeParametersAndReturn
+        protected sealed override RuntimeParameterInfo[] RuntimeParameters
         {
             get
             {
-                return _common.GetRuntimeParametersAndReturn(this, Array.Empty<RuntimeType>());
+                RuntimeParameterInfo ignore;
+                return _lazyParameters ?? (_lazyParameters = _common.GetRuntimeParameters(this, Array.Empty<RuntimeTypeInfo>(), out ignore));
             }
         }
 
@@ -159,17 +163,18 @@ namespace System.Reflection.Runtime.MethodInfos
         {
             get
             {
-                if (this._common.DefiningTypeInfo.IsAbstract)
-                    throw new MemberAccessException(SR.Format(SR.Acc_CreateAbstEx, this._common.DefiningTypeInfo.FullName));
+                if (_common.DefiningTypeInfo.IsAbstract)
+                    throw new MemberAccessException(SR.Format(SR.Acc_CreateAbstEx, _common.DefiningTypeInfo.FullName));
 
                 if (this.IsStatic)
                     throw new MemberAccessException(SR.Acc_NotClassInit);
 
-                return ReflectionCoreExecution.ExecutionEnvironment.GetMethodInvoker(_common.Reader, _common.DeclaringType, _common.MethodHandle, Array.Empty<RuntimeType>(), this);
+                return ReflectionCoreExecution.ExecutionEnvironment.GetMethodInvoker(_common.Reader, _common.DeclaringType, _common.MethodHandle, Array.Empty<RuntimeTypeInfo>(), this);
             }
         }
 
-        private RuntimeMethodCommon _common;
+        private volatile RuntimeParameterInfo[] _lazyParameters;
+        private readonly RuntimeMethodCommon _common;
     }
 }
 

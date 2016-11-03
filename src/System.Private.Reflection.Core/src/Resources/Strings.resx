@@ -144,11 +144,11 @@
   <data name="Reflection_CustomReflectionObjectsNotSupported" xml:space="preserve">
     <value>The object '{0}' was created by a custom ReflectionContext and cannot be used here.</value>
   </data>
-  <data name="TypeLoad_TypeNotFoundByGetType" xml:space="preserve">
+  <data name="TypeLoad_TypeNotFound" xml:space="preserve">
     <value>The type '{0}' cannot be found.</value>
   </data>
-  <data name="TypeLoad_TypeNotFound" xml:space="preserve">
-    <value>The type '{0}' cannot be found in the metadata for '{1}'.</value>
+  <data name="TypeLoad_TypeNotFoundInAssembly" xml:space="preserve">
+    <value>The type '{0}' cannot be found in assembly '{1}'.</value>
   </data>
   <data name="TypeLoad_BadEscape" xml:space="preserve">
     <value>An invalid escape sequence was found inside a type name.</value>
@@ -206,5 +206,59 @@
   </data>
   <data name="InvalidOperation_NoPublicRemoveMethod" xml:space="preserve">
     <value>Cannot remove the event handler since no public remove method exists for the event.</value>
+  </data>
+  <data name="Arg_NotGenericTypeDefinition" xml:space="preserve">
+    <value>{0} is not a GenericTypeDefinition. MakeGenericType may only be called on a type for which Type.IsGenericTypeDefinition is true.</value>
+  </data>
+  <data name="PlatformNotSupported_MakeGenericType" xml:space="preserve">
+    <value>PlatformNotSupported_MakeGenericType", @"MakeGenericType can only accept Type objects created by the runtime.</value>
+  </data>
+  <data name="ArgumentException_InvalidTypeArgument" xml:space="preserve">
+    <value>The type '{0}' may not be used as a type argument.</value>
+  </data>
+  <data name="ArgumentException_InvalidArrayElementType" xml:space="preserve">
+    <value>The type '{0}' may not be used as an array element type.</value>
+  </data>
+  <data name="PlatformNotSupported_NoTypeHandleForByRef" xml:space="preserve">
+    <value>TypeHandles are not supported for types that return true for IsByRef.</value>
+  </data>
+  <data name="PlatformNotSupported_NoTypeHandleForOpenTypes" xml:space="preserve">
+    <value>TypeHandles are not supported for types that return true for ContainsGenericParameters.</value>
+  </data>
+  <data name="Argument_HasToBeArrayClass" xml:space="preserve">
+    <value>Must be an array type.</value>
+  </data>
+  <data name="InvalidOperation_NotGenericType" xml:space="preserve">
+    <value>This operation is only valid on generic types.</value>
+  </data>
+  <data name="Arg_GetMethNotFnd" xml:space="preserve">
+    <value>Property get method not found.</value>
+  </data>
+  <data name="Arg_SetMethNotFnd" xml:space="preserve">
+    <value>Property set method not found.</value>
+  </data>
+  <data name="TypeIsNotReflectable" xml:space="preserve">
+    <value>Type instance is not IReflectable.</value>
+  </data>
+  <data name="Arg_EmptyArray" xml:space="preserve">
+    <value>Array may not be empty.</value>
+  </data>
+  <data name="MissingMember" xml:space="preserve">
+    <value>Member not found.</value>
+  </data>
+  <data name="Arg_AmbiguousMatchException" xml:space="preserve">
+    <value>Ambiguous match found.</value>
+  </data>
+  <data name="PlatformNotSupported_InterfaceMap" xml:space="preserve">
+    <value>GetRuntimeInterfaceMap() is not supported on this runtime.</value>
+  </data>
+  <data name="NoMetadataTokenAvailable" xml:space="preserve">
+    <value>There is no metadata token available for the given member.</value>
+  </data>
+  <data name="ModuleVersionIdNotSupported" xml:space="preserve">
+    <value>Module version IDs (MVIDs) cannot be retrieved on this platform.</value>
+  </data>
+  <data name="FileNotFound_ResolveAssembly" xml:space="preserve">
+    <value>Could not resolve assembly '{0}'.</value>
   </data>
 </root>

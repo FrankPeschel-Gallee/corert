@@ -6,7 +6,7 @@
 // Don't override IsAlwaysNormalized because it is just a Unicode Transformation and could be confused.
 //
 
-using System;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 
 namespace System.Text
@@ -26,6 +26,10 @@ namespace System.Text
         // These are the characters that can be optionally directly encoded in UTF7.
         private const String optionalChars =
             "!\"#$%&*;<=>@[]^_`{|}";
+
+        // Used by Encoding.UTF7 for lazy initialization
+        // The initialization code will not be run until a static member of the class is referenced
+        internal static readonly UTF7Encoding s_default = new UTF7Encoding();
 
         // The set of base 64 characters.
         private byte[] _base64Bytes;
@@ -214,13 +218,13 @@ namespace System.Text
         {
             return EncodingForwarder.GetString(this, bytes, index, count);
         }
-        
+
         // End of overridden methods which use EncodingForwarder
 
         internal override unsafe int GetByteCount(char* chars, int count, EncoderNLS baseEncoder)
         {
-            Contract.Assert(chars != null, "[UTF7Encoding.GetByteCount]chars!=null");
-            Contract.Assert(count >= 0, "[UTF7Encoding.GetByteCount]count >=0");
+            Debug.Assert(chars != null, "[UTF7Encoding.GetByteCount]chars!=null");
+            Debug.Assert(count >= 0, "[UTF7Encoding.GetByteCount]count >=0");
 
             // Just call GetBytes with bytes == null
             return GetBytes(chars, count, null, 0, baseEncoder);
@@ -229,9 +233,9 @@ namespace System.Text
         internal override unsafe int GetBytes(char* chars, int charCount,
                                                 byte* bytes, int byteCount, EncoderNLS baseEncoder)
         {
-            Contract.Assert(byteCount >= 0, "[UTF7Encoding.GetBytes]byteCount >=0");
-            Contract.Assert(chars != null, "[UTF7Encoding.GetBytes]chars!=null");
-            Contract.Assert(charCount >= 0, "[UTF7Encoding.GetBytes]charCount >=0");
+            Debug.Assert(byteCount >= 0, "[UTF7Encoding.GetBytes]byteCount >=0");
+            Debug.Assert(chars != null, "[UTF7Encoding.GetBytes]chars!=null");
+            Debug.Assert(charCount >= 0, "[UTF7Encoding.GetBytes]charCount >=0");
 
             // Get encoder info
             UTF7Encoding.Encoder encoder = (UTF7Encoding.Encoder)baseEncoder;
@@ -368,8 +372,8 @@ namespace System.Text
 
         internal override unsafe int GetCharCount(byte* bytes, int count, DecoderNLS baseDecoder)
         {
-            Contract.Assert(count >= 0, "[UTF7Encoding.GetCharCount]count >=0");
-            Contract.Assert(bytes != null, "[UTF7Encoding.GetCharCount]bytes!=null");
+            Debug.Assert(count >= 0, "[UTF7Encoding.GetCharCount]count >=0");
+            Debug.Assert(bytes != null, "[UTF7Encoding.GetCharCount]bytes!=null");
 
             // Just call GetChars with null char* to do counting
             return GetChars(bytes, count, null, 0, baseDecoder);
@@ -378,9 +382,9 @@ namespace System.Text
         internal override unsafe int GetChars(byte* bytes, int byteCount,
                                                 char* chars, int charCount, DecoderNLS baseDecoder)
         {
-            Contract.Assert(byteCount >= 0, "[UTF7Encoding.GetChars]byteCount >=0");
-            Contract.Assert(bytes != null, "[UTF7Encoding.GetChars]bytes!=null");
-            Contract.Assert(charCount >= 0, "[UTF7Encoding.GetChars]charCount >=0");
+            Debug.Assert(byteCount >= 0, "[UTF7Encoding.GetChars]byteCount >=0");
+            Debug.Assert(bytes != null, "[UTF7Encoding.GetChars]bytes!=null");
+            Debug.Assert(charCount >= 0, "[UTF7Encoding.GetChars]charCount >=0");
 
             // Might use a decoder
             UTF7Encoding.Decoder decoder = (UTF7Encoding.Decoder)baseDecoder;
@@ -399,7 +403,7 @@ namespace System.Text
                 bitCount = decoder.bitCount;
                 firstByte = decoder.firstByte;
 
-                Contract.Assert(firstByte == false || decoder.bitCount <= 0,
+                Debug.Assert(firstByte == false || decoder.bitCount <= 0,
                     "[UTF7Encoding.GetChars]If remembered bits, then first byte flag shouldn't be set");
             }
 
@@ -728,8 +732,8 @@ namespace System.Text
             public override bool Fallback(byte[] bytesUnknown, int index)
             {
                 // We expect no previous fallback in our buffer
-                Contract.Assert(_iCount < 0, "[DecoderUTF7FallbackBuffer.Fallback] Can't have recursive fallbacks");
-                Contract.Assert(bytesUnknown.Length == 1, "[DecoderUTF7FallbackBuffer.Fallback] Only possible fallback case should be 1 unknown byte");
+                Debug.Assert(_iCount < 0, "[DecoderUTF7FallbackBuffer.Fallback] Can't have recursive fallbacks");
+                Debug.Assert(bytesUnknown.Length == 1, "[DecoderUTF7FallbackBuffer.Fallback] Only possible fallback case should be 1 unknown byte");
 
                 // Go ahead and get our fallback
                 _cFallback = (char)bytesUnknown[0];
@@ -787,7 +791,7 @@ namespace System.Text
             // array, and we might need the index, hence the byte*
             {
                 // We expect no previous fallback in our buffer
-                Contract.Assert(_iCount < 0, "[DecoderUTF7FallbackBuffer.InternalFallback] Can't have recursive fallbacks");
+                Debug.Assert(_iCount < 0, "[DecoderUTF7FallbackBuffer.InternalFallback] Can't have recursive fallbacks");
                 if (bytes.Length != 1)
                 {
                     throw new ArgumentException(SR.Argument_InvalidCharSequenceNoIndex);

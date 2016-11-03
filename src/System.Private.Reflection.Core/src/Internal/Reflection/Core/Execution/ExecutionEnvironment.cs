@@ -2,16 +2,15 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.IO;
-using global::System.Reflection;
-using global::System.Collections.Generic;
-using global::System.Reflection.Runtime.General;
-using global::Internal.Metadata.NativeFormat;
+using System;
+using System.IO;
+using System.Reflection;
+using System.Collections.Generic;
+using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.TypeInfos;
+using Internal.Metadata.NativeFormat;
 
-using global::Internal.Reflection.Core.NonPortable;
-
-using OpenMethodInvoker = global::System.Reflection.Runtime.MethodInfos.OpenMethodInvoker;
+using OpenMethodInvoker = System.Reflection.Runtime.MethodInfos.OpenMethodInvoker;
 
 namespace Internal.Reflection.Core.Execution
 {
@@ -42,6 +41,7 @@ namespace Internal.Reflection.Core.Execution
         public abstract bool TryGetBaseType(RuntimeTypeHandle typeHandle, out RuntimeTypeHandle baseTypeHandle);
         public abstract IEnumerable<RuntimeTypeHandle> TryGetImplementedInterfaces(RuntimeTypeHandle typeHandle);
         public abstract bool IsReflectionBlocked(RuntimeTypeHandle typeHandle);
+        public abstract string GetLastResortString(RuntimeTypeHandle typeHandle);
 
         //==============================================================================================
         // Default Value support.
@@ -63,7 +63,6 @@ namespace Internal.Reflection.Core.Execution
         public abstract bool TryGetArrayTypeElementType(RuntimeTypeHandle arrayTypeHandle, out RuntimeTypeHandle elementTypeHandle);
 
         public abstract bool TryGetMultiDimArrayTypeForElementType(RuntimeTypeHandle elementTypeHandle, int rank, out RuntimeTypeHandle arrayTypeHandle);
-        public abstract bool TryGetMultiDimArrayTypeElementType(RuntimeTypeHandle arrayTypeHandle, int rank, out RuntimeTypeHandle elementTypeHandle);
 
         public abstract bool TryGetPointerTypeForTargetType(RuntimeTypeHandle targetTypeHandle, out RuntimeTypeHandle pointerTypeHandle);
         public abstract bool TryGetPointerTypeTargetType(RuntimeTypeHandle pointerTypeHandle, out RuntimeTypeHandle targetTypeHandle);
@@ -120,13 +119,13 @@ namespace Internal.Reflection.Core.Execution
         //==============================================================================================
         // Non-public methods
         //==============================================================================================
-        internal MethodInvoker GetMethodInvoker(MetadataReader reader, RuntimeType declaringType, MethodHandle methodHandle, RuntimeType[] genericMethodTypeArguments, MemberInfo exceptionPertainant)
+        internal MethodInvoker GetMethodInvoker(MetadataReader reader, RuntimeTypeInfo declaringType, MethodHandle methodHandle, RuntimeTypeInfo[] genericMethodTypeArguments, MemberInfo exceptionPertainant)
         {
-            if (declaringType.InternalIsOpen)
+            if (declaringType.ContainsGenericParameters)
                 return new OpenMethodInvoker();
             for (int i = 0; i < genericMethodTypeArguments.Length; i++)
             {
-                if (genericMethodTypeArguments[i].InternalIsOpen)
+                if (genericMethodTypeArguments[i].ContainsGenericParameters)
                     return new OpenMethodInvoker();
             }
 
@@ -139,7 +138,7 @@ namespace Internal.Reflection.Core.Execution
             }
             MethodInvoker methodInvoker = TryGetMethodInvoker(reader, typeDefinitionHandle, methodHandle, genericMethodTypeArgumentHandles);
             if (methodInvoker == null)
-                throw declaringType.GetReflectionDomain().CreateNonInvokabilityException(exceptionPertainant);
+                throw ReflectionCoreExecution.ExecutionDomain.CreateNonInvokabilityException(exceptionPertainant);
             return methodInvoker;
         }
     }

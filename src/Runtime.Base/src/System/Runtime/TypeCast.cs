@@ -219,7 +219,8 @@ namespace System.Runtime
 
             // compare the array types structurally
 
-            if (CastCache.AreTypesAssignableInternal(pObjType->RelatedParameterType, pTargetType->RelatedParameterType,
+            if (pObjType->ParameterizedTypeShape == pTargetType->ParameterizedTypeShape &&
+                CastCache.AreTypesAssignableInternal(pObjType->RelatedParameterType, pTargetType->RelatedParameterType,
                 AssignmentVariation.AllowSizeEquivalence))
             {
                 return obj;
@@ -321,13 +322,10 @@ namespace System.Runtime
             if (pTargetType->HasGenericVariance)
             {
                 // Grab details about the instantiation of the target generic interface.
-                EETypeRef* pTargetInstantiation;
-                int targetArity;
-                GenericVariance* pTargetVarianceInfo;
-                EEType* pTargetGenericType = InternalCalls.RhGetGenericInstantiation(pTargetType,
-                                                                                      &targetArity,
-                                                                                      &pTargetInstantiation,
-                                                                                      &pTargetVarianceInfo);
+                EEType* pTargetGenericType = pTargetType->GenericDefinition;
+                EETypeRef* pTargetInstantiation = pTargetType->GenericArguments;
+                int targetArity = (int)pTargetType->GenericArity;
+                GenericVariance* pTargetVarianceInfo = pTargetType->GenericVariance;
 
                 Debug.Assert(pTargetVarianceInfo != null, "did not expect empty variance info");
 
@@ -343,20 +341,18 @@ namespace System.Runtime
                     // are not variant.
                     if (pInterfaceType->HasGenericVariance)
                     {
-                        // Grab instantiation details for the candidate interface.
-                        EETypeRef* pInterfaceInstantiation;
-                        int interfaceArity;
-                        GenericVariance* pInterfaceVarianceInfo;
-                        EEType* pInterfaceGenericType = InternalCalls.RhGetGenericInstantiation(pInterfaceType,
-                                                                                                 &interfaceArity,
-                                                                                                 &pInterfaceInstantiation,
-                                                                                                 &pInterfaceVarianceInfo);
-
-                        Debug.Assert(pInterfaceVarianceInfo != null, "did not expect empty variance info");
+                        EEType* pInterfaceGenericType = pInterfaceType->GenericDefinition;
 
                         // If the generic types aren't the same then the types aren't compatible.
                         if (pInterfaceGenericType != pTargetGenericType)
                             continue;
+
+                        // Grab instantiation details for the candidate interface.
+                        EETypeRef* pInterfaceInstantiation = pInterfaceType->GenericArguments;
+                        int interfaceArity = (int)pInterfaceType->GenericArity;
+                        GenericVariance* pInterfaceVarianceInfo = pInterfaceType->GenericVariance;
+
+                        Debug.Assert(pInterfaceVarianceInfo != null, "did not expect empty variance info");
 
                         // The types represent different instantiations of the same generic type. The
                         // arity of both had better be the same.
@@ -379,29 +375,26 @@ namespace System.Runtime
         // Compare two types to see if they are compatible via generic variance.
         static private unsafe bool TypesAreCompatibleViaGenericVariance(EEType* pSourceType, EEType* pTargetType)
         {
-            // Get generic instantiation metadata for both types.
-
-            EETypeRef* pTargetInstantiation;
-            int targetArity;
-            GenericVariance* pTargetVarianceInfo;
-            EEType* pTargetGenericType = InternalCalls.RhGetGenericInstantiation(pTargetType,
-                                                                                 &targetArity,
-                                                                                 &pTargetInstantiation,
-                                                                                 &pTargetVarianceInfo);
-            Debug.Assert(pTargetVarianceInfo != null, "did not expect empty variance info");
-
-            EETypeRef* pSourceInstantiation;
-            int sourceArity;
-            GenericVariance* pSourceVarianceInfo;
-            EEType* pSourceGenericType = InternalCalls.RhGetGenericInstantiation(pSourceType,
-                                                                                 &sourceArity,
-                                                                                 &pSourceInstantiation,
-                                                                                 &pSourceVarianceInfo);
-            Debug.Assert(pSourceVarianceInfo != null, "did not expect empty variance info");
+            EEType* pTargetGenericType = pTargetType->GenericDefinition;
+            EEType* pSourceGenericType = pSourceType->GenericDefinition;
 
             // If the generic types aren't the same then the types aren't compatible.
             if (pSourceGenericType == pTargetGenericType)
             {
+                // Get generic instantiation metadata for both types.
+
+                EETypeRef* pTargetInstantiation = pTargetType->GenericArguments;
+                int targetArity = (int)pTargetType->GenericArity;
+                GenericVariance* pTargetVarianceInfo = pTargetType->GenericVariance;
+
+                Debug.Assert(pTargetVarianceInfo != null, "did not expect empty variance info");
+
+                EETypeRef* pSourceInstantiation = pSourceType->GenericArguments;
+                int sourceArity = (int)pSourceType->GenericArity;
+                GenericVariance* pSourceVarianceInfo = pSourceType->GenericVariance;
+
+                Debug.Assert(pSourceVarianceInfo != null, "did not expect empty variance info");
+
                 // The types represent different instantiations of the same generic type. The
                 // arity of both had better be the same.
                 Debug.Assert(targetArity == sourceArity, "arity mismatch betweeen generic instantiations");
@@ -766,24 +759,19 @@ namespace System.Runtime
         }
 
 #if CORERT
-        // CORERT-TODO: Remove once ref locals are available in C# (https://github.com/dotnet/roslyn/issues/118)
         [RuntimeImport(Redhawk.BaseName, "RhpAssignRef")]
         [MethodImpl(MethodImplOptions.InternalCall)]
-        static private unsafe extern void RhpAssignRef(IntPtr * address, object obj);
-
-        // Size of array header in number of IntPtr-sized elements
-        private const int ArrayBaseIndex = 2;
+        static private unsafe extern void RhpAssignRef(ref Object address, object obj);
 
         [RuntimeExport("RhpStelemRef")]
-        static public unsafe void StelemRef(Object array, int index, object obj)
+        static public unsafe void StelemRef(Array array, int index, object obj)
         {
             // This is supported only on arrays
             Debug.Assert(array.EEType->IsArray, "first argument must be an array");
 
-            if (index >= array.GetArrayLength())
+            if (index >= array.Length)
             {
-                Exception e = array.EEType->GetClasslibException(ExceptionIDs.IndexOutOfRange);
-                throw e;
+                throw array.EEType->GetClasslibException(ExceptionIDs.IndexOutOfRange);
             }
 
             if (obj != null)
@@ -804,25 +792,23 @@ namespace System.Runtime
                 }
 
                 // Both bounds and type check are ok.
-                fixed (void* pArray = &array.m_pEEType)
-                {
-                    RhpAssignRef((IntPtr*)pArray + ArrayBaseIndex + index, obj);
-                }
+
+                // Call write barrier directly. Assigning object reference would call slower checked write barrier.
+                ref Object rawData = ref Unsafe.As<byte, Object>(ref array.GetRawSzArrayData());
+                RhpAssignRef(ref Unsafe.Add(ref rawData, index), obj);
             }
             else
             {
-                fixed (void * pArray = &array.m_pEEType)
-                {
-                    // Storing null does not require write barrier
-                    *((IntPtr*)pArray + ArrayBaseIndex + index) = default(IntPtr);
-                }
+                // Storing null does not require write barrier
+                ref IntPtr rawData = ref Unsafe.As<byte, IntPtr>(ref array.GetRawSzArrayData());
+                Unsafe.Add(ref rawData, index) = default(IntPtr);
             }
         }
 
         [RuntimeExport("RhpLdelemaRef")]
-        static public unsafe void * LdelemaRef(Object array, int index, IntPtr elementType)
+        static public unsafe ref Object LdelemaRef(Array array, int index, IntPtr elementType)
         {
-            Debug.Assert(array.EEType->IsArray, "second argument must be an array");
+            Debug.Assert(array.EEType->IsArray, "first argument must be an array");
 
             EEType* elemType = (EEType*)elementType;
             EEType* arrayElemType = array.EEType->RelatedParameterType;
@@ -835,12 +821,8 @@ namespace System.Runtime
                 throw array.EEType->GetClasslibException(ExceptionIDs.ArrayTypeMismatch);
             }
 
-            fixed (void * pArray = &array.m_pEEType)
-            {
-                // CORERT-TODO: This code has GC hole - the method return type should really be byref.
-                // Requires byref returns in C# to fix cleanly (https://github.com/dotnet/roslyn/issues/118)
-                return (IntPtr*)pArray + ArrayBaseIndex + index;
-            }
+            ref Object rawData = ref Unsafe.As<byte, Object>(ref array.GetRawSzArrayData());
+            return ref Unsafe.Add(ref rawData, index);
         }
 #endif
 
@@ -1088,7 +1070,7 @@ namespace System.Runtime
                 if (s_previousCache.IsAllocated)
                 {
                     // Unchecked cast to avoid recursive dependency on array casting
-                    Entry[] previousCache = RuntimeHelpers.UncheckedCast<Entry[]>(s_previousCache.Target);
+                    Entry[] previousCache = Unsafe.As<Entry[]>(s_previousCache.Target);
                     if (previousCache != null)
                     {
                         Entry previousEntry = LookupInCache(previousCache, ref key);

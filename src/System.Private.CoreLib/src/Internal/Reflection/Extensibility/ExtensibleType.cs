@@ -3,6 +3,8 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Reflection;
+using System.Collections.Generic;
 
 namespace Internal.Reflection.Extensibility
 {

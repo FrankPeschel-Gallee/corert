@@ -141,7 +141,7 @@ namespace Internal.Runtime.TypeLoader
             return false;
         }
 
-        public bool TryGetArrayTypeForElementType(RuntimeTypeHandle elementTypeHandle, out RuntimeTypeHandle arrayTypeHandle)
+        public bool TryGetArrayTypeForElementType(RuntimeTypeHandle elementTypeHandle, bool isMdArray, int rank, out RuntimeTypeHandle arrayTypeHandle)
         {
             throw new NotImplementedException();
         }
@@ -238,6 +238,16 @@ namespace Internal.Runtime.TypeLoader
         }
 
         public bool TryGetFieldOffset(RuntimeTypeHandle declaringTypeHandle, uint fieldOrdinal, out int fieldOffset)
+        {
+            throw new NotImplementedException();
+        }
+
+        public IntPtr TryGetThreadStaticFieldOffsetCookieForTypeAndFieldOffset(RuntimeTypeHandle runtimeTypeHandle, uint fieldOffset)
+        {
+            throw new NotImplementedException();
+        }
+
+        public static uint GetThreadStaticTypeOffsetFromThreadStaticCookie(IntPtr threadStaticFieldCookie)
         {
             throw new NotImplementedException();
         }
@@ -394,11 +404,6 @@ namespace Internal.Runtime.TypeLoader
         /// Method dictionary for components
         /// </summary>
         public IntPtr DictionaryComponent;
-
-        /// <summary>
-        /// Default value
-        /// </summary>
-        public string DefaultValueString;
 
         /// <summary>
         /// Dynamic invoke cookie

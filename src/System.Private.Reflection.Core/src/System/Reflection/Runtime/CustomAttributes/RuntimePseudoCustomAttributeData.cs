@@ -2,18 +2,17 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Reflection;
-using global::System.Diagnostics;
-using global::System.Collections.Generic;
-using global::System.Collections.ObjectModel;
-using global::System.Reflection.Runtime.Types;
-using global::System.Reflection.Runtime.General;
+using System;
+using System.Reflection;
+using System.Diagnostics;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.TypeInfos;
 
-using global::Internal.LowLevelLinq;
-using global::Internal.Reflection.Core;
-using global::Internal.Reflection.Core.NonPortable;
-using global::Internal.Metadata.NativeFormat;
+using Internal.LowLevelLinq;
+using Internal.Reflection.Core;
+using Internal.Metadata.NativeFormat;
 
 namespace System.Reflection.Runtime.CustomAttributes
 {
@@ -22,7 +21,7 @@ namespace System.Reflection.Runtime.CustomAttributes
     //
     internal sealed class RuntimePseudoCustomAttributeData : RuntimeCustomAttributeData
     {
-        public RuntimePseudoCustomAttributeData(RuntimeType attributeType, IList<CustomAttributeTypedArgument> constructorArguments, IList<CustomAttributeNamedArgument> namedArguments)
+        public RuntimePseudoCustomAttributeData(RuntimeTypeInfo attributeType, IList<CustomAttributeTypedArgument> constructorArguments, IList<CustomAttributeNamedArgument> namedArguments)
         {
             _attributeType = attributeType;
             if (constructorArguments == null)
@@ -39,6 +38,23 @@ namespace System.Reflection.Runtime.CustomAttributes
             get
             {
                 return _attributeType;
+            }
+        }
+
+        public sealed override ConstructorInfo Constructor
+        {
+            get
+            {
+                int numArguments = _constructorArguments.Count;
+                if (numArguments == 0)
+                    return ResolveAttributeConstructor(_attributeType, Array.Empty<Type>());
+
+                Type[] expectedParameterTypes = new Type[numArguments];
+                for (int i = 0; i < numArguments; i++)
+                {
+                    expectedParameterTypes[i] = _constructorArguments[i].ArgumentType;
+                }
+                return ResolveAttributeConstructor(_attributeType, expectedParameterTypes);
             }
         }
 
@@ -62,8 +78,8 @@ namespace System.Reflection.Runtime.CustomAttributes
 
         // Equals/GetHashCode no need to override (they just implement reference equality but desktop never unified these things.)
 
-        private RuntimeType _attributeType;
-        private ReadOnlyCollection<CustomAttributeTypedArgument> _constructorArguments;
-        private ReadOnlyCollection<CustomAttributeNamedArgument> _namedArguments;
+        private readonly RuntimeTypeInfo _attributeType;
+        private readonly ReadOnlyCollection<CustomAttributeTypedArgument> _constructorArguments;
+        private readonly ReadOnlyCollection<CustomAttributeNamedArgument> _namedArguments;
     }
 }

@@ -116,6 +116,9 @@ namespace System.Runtime.InteropServices
 #endif
             }
 
+            if (InteropEventProvider.IsEnabled())
+                InteropEventProvider.Log.TaskCCWQueryInterface((long)managedCCW.NativeCCW, typeHandle.GetRawValue().ToInt64());
+
             pCcw->m_pVtable = vt.ToPointer();
             pCcw->m_pNativeCCW = managedCCW.NativeCCW;
             pCcw->m_interfaceType = typeHandle;
@@ -1072,6 +1075,8 @@ namespace System.Runtime.InteropServices
 
         static internal void InitRefCountedHandleCallback()
         {
+            // TODO: <https://github.com/dotnet/corert/issues/1596>
+#if !CORERT
             //
             // Register the callback to ref-counted handles
             // Inside this callback we'll determine whether the ref count handle to the target object
@@ -1081,6 +1086,7 @@ namespace System.Runtime.InteropServices
                 AddrOfIntrinsics.AddrOf<AddrOfIntrinsics.AddrOfIsAlive>(ComCallableObject.IsAlive),
                 typeof(ComCallableObject).TypeHandle
                 );
+#endif
         }
 
         /// <summary>

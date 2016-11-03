@@ -99,9 +99,11 @@ public class MemberDef
             {
                 if ((Flags & (MemberDefFlags.List | MemberDefFlags.Map)) != 0)
                     return $"List<{typeName}>";
+                else
+                    return $"{typeName}[]";
             }
 
-            return (kind != MemberTypeKind.Accessor) ? $"{typeName}[]" : $"IEnumerable<{typeName}>";
+            return $"{typeName}Collection";
         }
         return typeName;
     }
@@ -319,7 +321,7 @@ class SchemaDef
                 new RecordDef(
                     name: "Constant" + primitiveType.TypeName + "Array",
                     members: new MemberDef[] {
-                        new MemberDef(name: "Value", flags: MemberDefFlags.Array, typeName: primitiveType.Name)
+                        new MemberDef(name: "Value", flags: MemberDefFlags.Array, typeName: primitiveType.TypeName)
                     }
                 )
         )
@@ -368,6 +370,14 @@ class SchemaDef
         "TypeDefinition",
         "TypeReference",
         "TypeSpecification",
+    };
+
+    private readonly static string[] TypeDefOrRefOrSpecOrMod = new string[]
+    {
+        "TypeDefinition",
+        "TypeReference",
+        "TypeSpecification",
+        "ModifiedType",
     };
 
     private readonly static string[] TypeSig = new string[]
@@ -447,7 +457,7 @@ class SchemaDef
                 new MemberDef("MinorVersion", "ushort", MemberDefFlags.Compare),
                 new MemberDef("BuildNumber", "ushort", MemberDefFlags.Compare),
                 new MemberDef("RevisionNumber", "ushort", MemberDefFlags.Compare),
-                new MemberDef("PublicKey", "byte", MemberDefFlags.Array | MemberDefFlags.Compare),
+                new MemberDef("PublicKey", "Byte", MemberDefFlags.Array | MemberDefFlags.Compare),
                 new MemberDef("Culture", "ConstantStringValue", MemberDefFlags.RecordRef | MemberDefFlags.Child | MemberDefFlags.Compare),
                 new MemberDef("RootNamespaceDefinition", "NamespaceDefinition", MemberDefFlags.RecordRef | MemberDefFlags.Child),
                 new MemberDef("CustomAttributes", "CustomAttribute", MemberDefFlags.List | MemberDefFlags.RecordRef | MemberDefFlags.Child),
@@ -462,7 +472,7 @@ class SchemaDef
                 new MemberDef("MinorVersion", "ushort"),
                 new MemberDef("BuildNumber", "ushort"),
                 new MemberDef("RevisionNumber", "ushort"),
-                new MemberDef("PublicKeyOrToken", "byte", MemberDefFlags.Array),
+                new MemberDef("PublicKeyOrToken", "Byte", MemberDefFlags.Array),
                 new MemberDef("Culture", "ConstantStringValue", MemberDefFlags.RecordRef | MemberDefFlags.Child),
                 new MemberDef("CustomAttributes", "CustomAttribute", MemberDefFlags.List | MemberDefFlags.RecordRef | MemberDefFlags.Child),
             }
@@ -637,7 +647,7 @@ class SchemaDef
         new RecordDef(
             name: "SZArraySignature",
             members: new MemberDef[] {
-                new MemberDef("ElementType", TypeDefOrRefOrSpec, MemberDefFlags.RecordRef),
+                new MemberDef("ElementType", TypeDefOrRefOrSpecOrMod, MemberDefFlags.RecordRef),
             }
         ),
         new RecordDef(
@@ -645,8 +655,8 @@ class SchemaDef
             members: new MemberDef[] {
                 new MemberDef("ElementType", TypeDefOrRefOrSpec, MemberDefFlags.RecordRef),
                 new MemberDef("Rank", "int"),
-                new MemberDef("Sizes", "int", MemberDefFlags.Array),
-                new MemberDef("LowerBounds", "int", MemberDefFlags.Array),
+                new MemberDef("Sizes", "Int32", MemberDefFlags.Array),
+                new MemberDef("LowerBounds", "Int32", MemberDefFlags.Array),
             }
         ),
         new RecordDef(
@@ -658,7 +668,7 @@ class SchemaDef
         new RecordDef(
             name: "PointerSignature",
             members: new MemberDef[] {
-                new MemberDef("Type", TypeDefOrRefOrSpec, MemberDefFlags.RecordRef),
+                new MemberDef("Type", TypeDefOrRefOrSpecOrMod, MemberDefFlags.RecordRef),
             }
         ),
         new RecordDef(
@@ -676,17 +686,15 @@ class SchemaDef
         new RecordDef(
             name: "FieldSignature",
             members: new MemberDef[] {
-                new MemberDef("Type", TypeDefOrRefOrSpec, MemberDefFlags.RecordRef),
-                new MemberDef("CustomModifiers", "CustomModifier", MemberDefFlags.List | MemberDefFlags.RecordRef),
+                new MemberDef("Type", TypeDefOrRefOrSpecOrMod, MemberDefFlags.RecordRef),
             }
         ),
         new RecordDef(
             name: "PropertySignature",
             members: new MemberDef[] {
                 new MemberDef("CallingConvention", "CallingConventions"),
-                new MemberDef("CustomModifiers", "CustomModifier", MemberDefFlags.List | MemberDefFlags.RecordRef),
-                new MemberDef("Type", TypeDefOrRefOrSpec, MemberDefFlags.RecordRef),
-                new MemberDef("Parameters", "ParameterTypeSignature", MemberDefFlags.List | MemberDefFlags.RecordRef | MemberDefFlags.EnumerateForHashCode),
+                new MemberDef("Type", TypeDefOrRefOrSpecOrMod, MemberDefFlags.RecordRef),
+                new MemberDef("Parameters", TypeDefOrRefOrSpecOrMod, MemberDefFlags.List | MemberDefFlags.RecordRef | MemberDefFlags.EnumerateForHashCode),
             }
         ),
         new RecordDef(
@@ -694,23 +702,9 @@ class SchemaDef
             members: new MemberDef[] {
                 new MemberDef("CallingConvention", "CallingConventions"),
                 new MemberDef("GenericParameterCount", "int"),
-                new MemberDef("ReturnType", "ReturnTypeSignature", MemberDefFlags.RecordRef),
-                new MemberDef("Parameters", "ParameterTypeSignature", MemberDefFlags.List | MemberDefFlags.RecordRef | MemberDefFlags.EnumerateForHashCode),
-                new MemberDef("VarArgParameters", "ParameterTypeSignature", MemberDefFlags.List | MemberDefFlags.RecordRef | MemberDefFlags.EnumerateForHashCode),
-            }
-        ),
-        new RecordDef(
-            name: "ReturnTypeSignature",
-            members: new MemberDef[] {
-                new MemberDef("CustomModifiers", "CustomModifier", MemberDefFlags.List | MemberDefFlags.RecordRef),
-                new MemberDef("Type", TypeDefOrRefOrSpec, MemberDefFlags.RecordRef),
-            }
-        ),
-        new RecordDef(
-            name: "ParameterTypeSignature",
-            members: new MemberDef[] {
-                new MemberDef("CustomModifiers", "CustomModifier", MemberDefFlags.List | MemberDefFlags.RecordRef),
-                new MemberDef("Type", TypeDefOrRefOrSpec, MemberDefFlags.RecordRef),
+                new MemberDef("ReturnType", TypeDefOrRefOrSpecOrMod, MemberDefFlags.RecordRef),
+                new MemberDef("Parameters", TypeDefOrRefOrSpecOrMod, MemberDefFlags.List | MemberDefFlags.RecordRef | MemberDefFlags.EnumerateForHashCode),
+                new MemberDef("VarArgParameters", TypeDefOrRefOrSpecOrMod, MemberDefFlags.List | MemberDefFlags.RecordRef | MemberDefFlags.EnumerateForHashCode),
             }
         ),
         new RecordDef(
@@ -723,10 +717,11 @@ class SchemaDef
             }
         ),
         new RecordDef(
-            name: "CustomModifier",
+            name: "ModifiedType",
             members: new MemberDef[] {
                 new MemberDef("IsOptional", "bool"),
-                new MemberDef("Type", TypeDefOrRefOrSpec, MemberDefFlags.RecordRef),
+                new MemberDef("ModifierType", TypeDefOrRefOrSpec, MemberDefFlags.RecordRef),
+                new MemberDef("Type", TypeDefOrRefOrSpecOrMod, MemberDefFlags.RecordRef),
             }
         )
     }
@@ -739,4 +734,16 @@ class SchemaDef
     // Contains a list of records with corresponding Handle types (currently all of them).
     /// </summary>
     public readonly static string[] HandleSchema = (from record in RecordSchema select record.Name).ToArray();
+
+    public readonly static string[] TypeNamesWithCollectionTypes =
+        RecordSchema.SelectMany(r =>
+            from member in r.Members
+            let memberTypeName = member.TypeName as string
+            where memberTypeName != null &&
+                ((member.Flags & MemberDefFlags.Array) != 0 ||
+                (member.Flags & MemberDefFlags.List) != 0 ||
+                (member.Flags & MemberDefFlags.Map) != 0) &&
+                !PrimitiveTypes.Any(pt => pt.TypeName == memberTypeName)
+            select memberTypeName
+        ).Concat(new[] { "ScopeDefinition" }).Distinct().ToArray();
 }

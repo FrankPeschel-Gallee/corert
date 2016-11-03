@@ -14,6 +14,7 @@
 using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 
 namespace System
@@ -28,38 +29,30 @@ namespace System
         private static double[] s_roundPower10Double = new double[] {
           1E0, 1E1, 1E2, 1E3, 1E4, 1E5, 1E6, 1E7, 1E8,
           1E9, 1E10, 1E11, 1E12, 1E13, 1E14, 1E15
-      };
+        };
 
         public const double PI = 3.14159265358979323846;
         public const double E = 2.7182818284590452354;
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Acos(double d)
         {
             return RuntimeImports.acos(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Asin(double d)
         {
             return RuntimeImports.asin(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Atan(double d)
         {
             return RuntimeImports.atan(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Atan2(double y, double x)
         {
             if (Double.IsInfinity(x) && Double.IsInfinity(y))
@@ -72,25 +65,19 @@ namespace System
             return Decimal.Ceiling(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Ceiling(double a)
         {
             return RuntimeImports.ceil(a);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Cos(double d)
         {
             return RuntimeImports.cos(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Cosh(double value)
         {
             return RuntimeImports.cosh(value);
@@ -101,9 +88,7 @@ namespace System
             return Decimal.Floor(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Floor(double d)
         {
             return RuntimeImports.floor(d);
@@ -133,41 +118,31 @@ namespace System
             return value;
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Sin(double a)
         {
             return RuntimeImports.sin(a);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Tan(double a)
         {
             return RuntimeImports.tan(a);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Sinh(double value)
         {
             return RuntimeImports.sinh(value);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Tanh(double value)
         {
             return RuntimeImports.tanh(value);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Round(double a)
         {
             // If the number has no fractional part do nothing
@@ -251,33 +226,25 @@ namespace System
             return intpart;
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Sqrt(double d)
         {
             return RuntimeImports.sqrt(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Log(double d)
         {
             return RuntimeImports.log(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Log10(double d)
         {
             return RuntimeImports.log10(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Exp(double d)
         {
             if (Double.IsInfinity(d))
@@ -289,9 +256,7 @@ namespace System
             return RuntimeImports.exp(d);
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         public static double Pow(double x, double y)
         {
             if (Double.IsNaN(y))
@@ -367,8 +332,6 @@ namespace System
         **Returns the absolute value of it's argument.
         ============================================================================*/
 
-#if CORERT
-
         [CLSCompliant(false)]
         public static sbyte Abs(sbyte value)
         {
@@ -380,7 +343,7 @@ namespace System
 
         private static sbyte AbsHelper(sbyte value)
         {
-            Contract.Requires(value < 0, "AbsHelper should only be called for negative values!");
+            Debug.Assert(value < 0, "AbsHelper should only be called for negative values!");
             if (value == SByte.MinValue)
                 throw new OverflowException(SR.Overflow_NegateTwosCompNum);
             Contract.EndContractBlock();
@@ -397,7 +360,7 @@ namespace System
 
         private static short AbsHelper(short value)
         {
-            Contract.Requires(value < 0, "AbsHelper should only be called for negative values!");
+            Debug.Assert(value < 0, "AbsHelper should only be called for negative values!");
             if (value == Int16.MinValue)
                 throw new OverflowException(SR.Overflow_NegateTwosCompNum);
             Contract.EndContractBlock();
@@ -414,7 +377,7 @@ namespace System
 
         private static int AbsHelper(int value)
         {
-            Contract.Requires(value < 0, "AbsHelper should only be called for negative values!");
+            Debug.Assert(value < 0, "AbsHelper should only be called for negative values!");
             if (value == Int32.MinValue)
                 throw new OverflowException(SR.Overflow_NegateTwosCompNum);
             Contract.EndContractBlock();
@@ -431,7 +394,7 @@ namespace System
 
         private static long AbsHelper(long value)
         {
-            Contract.Requires(value < 0, "AbsHelper should only be called for negative values!");
+            Debug.Assert(value < 0, "AbsHelper should only be called for negative values!");
             if (value == Int64.MinValue)
                 throw new OverflowException(SR.Overflow_NegateTwosCompNum);
             Contract.EndContractBlock();
@@ -449,59 +412,6 @@ namespace System
         {
             return RuntimeImports.fabs(value);
         }
-
-#else // CORERT
-
-        [CLSCompliant(false)]
-        [Intrinsic]
-        public static sbyte Abs(sbyte value)
-        {
-            // This is actually an intrinsic and not a recursive function call.
-            // We have it here so that you can do "ldftn" on the method or reflection invoke it.
-            return Abs(value);
-        }
-
-        [Intrinsic]
-        public static short Abs(short value)
-        {
-            // This is actually an intrinsic and not a recursive function call.
-            // We have it here so that you can do "ldftn" on the method or reflection invoke it.
-            return Abs(value);
-        }
-
-        [Intrinsic]
-        public static int Abs(int value)
-        {
-            // This is actually an intrinsic and not a recursive function call.
-            // We have it here so that you can do "ldftn" on the method or reflection invoke it.
-            return Abs(value);
-        }
-
-        [Intrinsic]
-        public static long Abs(long value)
-        {
-            // This is actually an intrinsic and not a recursive function call.
-            // We have it here so that you can do "ldftn" on the method or reflection invoke it.
-            return Abs(value);
-        }
-
-        [Intrinsic]
-        public static float Abs(float value)
-        {
-            // This is actually an intrinsic and not a recursive function call.
-            // We have it here so that you can do "ldftn" on the method or reflection invoke it.
-            return Abs(value);
-        }
-
-        [Intrinsic]
-        public static double Abs(double value)
-        {
-            // This is actually an intrinsic and not a recursive function call.
-            // We have it here so that you can do "ldftn" on the method or reflection invoke it.
-            return Abs(value);
-        }
-
-#endif // CORERT
 
         public static Decimal Abs(Decimal value)
         {

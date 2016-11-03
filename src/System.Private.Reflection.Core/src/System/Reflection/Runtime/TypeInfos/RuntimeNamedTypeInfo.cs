@@ -2,23 +2,27 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Reflection;
-using global::System.Diagnostics;
-using global::System.Collections.Generic;
-using global::System.Collections.Concurrent;
-using global::System.Reflection.Runtime.Types;
-using global::System.Reflection.Runtime.General;
-using global::System.Reflection.Runtime.Assemblies;
-using global::System.Reflection.Runtime.CustomAttributes;
+using System;
+using System.Text;
+using System.Reflection;
+using System.Diagnostics;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.TypeInfos;
+using System.Reflection.Runtime.Assemblies;
+using System.Reflection.Runtime.CustomAttributes;
 
-using global::Internal.LowLevelLinq;
-using global::Internal.Reflection.Core.Execution;
-using global::Internal.Reflection.Core.NonPortable;
+using Internal.LowLevelLinq;
+using Internal.Reflection.Core.Execution;
 
-using global::Internal.Reflection.Tracing;
+using Internal.Reflection.Tracing;
 
-using global::Internal.Metadata.NativeFormat;
+using Internal.Metadata.NativeFormat;
+
+using CharSet = System.Runtime.InteropServices.CharSet;
+using LayoutKind = System.Runtime.InteropServices.LayoutKind;
+using StructLayoutAttribute = System.Runtime.InteropServices.StructLayoutAttribute;
 
 namespace System.Reflection.Runtime.TypeInfos
 {
@@ -28,11 +32,12 @@ namespace System.Reflection.Runtime.TypeInfos
     //
     internal sealed partial class RuntimeNamedTypeInfo : RuntimeTypeInfo, IEquatable<RuntimeNamedTypeInfo>
     {
-        private RuntimeNamedTypeInfo(MetadataReader reader, TypeDefinitionHandle typeDefinitionHandle)
+        private RuntimeNamedTypeInfo(MetadataReader reader, TypeDefinitionHandle typeDefinitionHandle, RuntimeTypeHandle typeHandle)
         {
             _reader = reader;
             _typeDefinitionHandle = typeDefinitionHandle;
             _typeDefinition = _typeDefinitionHandle.GetTypeDefinition(reader);
+            _typeHandle = typeHandle;
         }
 
         public sealed override Assembly Assembly
@@ -46,16 +51,15 @@ namespace System.Reflection.Runtime.TypeInfos
                 ScopeDefinitionHandle scopeDefinitionHandle = NamespaceChain.DefiningScope;
                 RuntimeAssemblyName runtimeAssemblyName = scopeDefinitionHandle.ToRuntimeAssemblyName(_reader);
 
-                return RuntimeAssembly.GetRuntimeAssembly(this.ReflectionDomain, runtimeAssemblyName);
+                return RuntimeAssembly.GetRuntimeAssembly(runtimeAssemblyName);
             }
         }
 
-        public sealed override TypeAttributes Attributes
+        public sealed override bool ContainsGenericParameters
         {
             get
             {
-                TypeAttributes attr = _typeDefinition.Flags;
-                return attr;
+                return IsGenericTypeDefinition;
             }
         }
 
@@ -68,16 +72,12 @@ namespace System.Reflection.Runtime.TypeInfos
                     ReflectionTrace.TypeInfo_CustomAttributes(this);
 #endif
 
-                IEnumerable<CustomAttributeData> customAttributes = RuntimeCustomAttributeData.GetCustomAttributes(this.ReflectionDomain, _reader, _typeDefinition.CustomAttributes);
+                IEnumerable<CustomAttributeData> customAttributes = RuntimeCustomAttributeData.GetCustomAttributes(_reader, _typeDefinition.CustomAttributes);
                 foreach (CustomAttributeData cad in customAttributes)
                     yield return cad;
-                ExecutionDomain executionDomain = this.ReflectionDomain as ExecutionDomain;
-                if (executionDomain != null)
+                foreach (CustomAttributeData cad in ReflectionCoreExecution.ExecutionEnvironment.GetPsuedoCustomAttributes(_reader, _typeDefinitionHandle))
                 {
-                    foreach (CustomAttributeData cad in executionDomain.ExecutionEnvironment.GetPsuedoCustomAttributes(_reader, _typeDefinitionHandle))
-                    {
-                        yield return cad;
-                    }
+                    yield return cad;
                 }
             }
         }
@@ -93,36 +93,16 @@ namespace System.Reflection.Runtime.TypeInfos
 
                 foreach (TypeDefinitionHandle nestedTypeHandle in _typeDefinition.NestedTypes)
                 {
-                    yield return RuntimeNamedTypeInfo.GetRuntimeNamedTypeInfo(_reader, nestedTypeHandle);
+                    yield return nestedTypeHandle.GetNamedType(_reader);
                 }
             }
         }
 
-        public sealed override bool Equals(Object obj)
-        {
-            if (Object.ReferenceEquals(this, obj))
-                return true;
-
-            RuntimeNamedTypeInfo other = obj as RuntimeNamedTypeInfo;
-            if (!Equals(other))
-                return false;
-            return true;
-        }
-
         public bool Equals(RuntimeNamedTypeInfo other)
         {
-            if (other == null)
-                return false;
-            if (this._reader != other._reader)
-                return false;
-            if (!(this._typeDefinitionHandle.Equals(other._typeDefinitionHandle)))
-                return false;
-            return true;
-        }
-
-        public sealed override int GetHashCode()
-        {
-            return _typeDefinitionHandle.GetHashCode();
+            // RuntimeTypeInfo.Equals(object) is the one that encapsulates our unification strategy so defer to him.
+            object otherAsObject = other;
+            return base.Equals(otherAsObject);
         }
 
         public sealed override Guid GUID
@@ -148,7 +128,7 @@ namespace System.Reflection.Runtime.TypeInfos
                         if (fahEnumerator.MoveNext())
                             continue;
                         FixedArgument guidStringArgument = guidStringArgumentHandle.GetFixedArgument(_reader);
-                        String guidString = guidStringArgument.Value.ParseConstantValue(this.ReflectionDomain, _reader) as String;
+                        String guidString = guidStringArgument.Value.ParseConstantValue(_reader) as String;
                         if (guidString == null)
                             continue;
                         return new Guid(guidString);
@@ -166,7 +146,7 @@ namespace System.Reflection.Runtime.TypeInfos
                 // uses the GUID as a dictionary key to look up types.) It will not be the same GUID on multiple runs of the app but so far, there's
                 // no evidence that's needed.
                 //
-                return _namedTypeToGuidTable.GetOrAdd(this).Item1;
+                return s_namedTypeToGuidTable.GetOrAdd(this).Item1;
             }
         }
 
@@ -178,12 +158,142 @@ namespace System.Reflection.Runtime.TypeInfos
             }
         }
 
-        public sealed override bool IsGenericType
+        public sealed override string Namespace
         {
             get
             {
-                return _typeDefinition.GenericParameters.GetEnumerator().MoveNext();
+#if ENABLE_REFLECTION_TRACE
+                if (ReflectionTrace.Enabled)
+                    ReflectionTrace.TypeInfo_Namespace(this);
+#endif
+
+                return NamespaceChain.NameSpace.EscapeTypeNameIdentifier();
             }
+        }
+
+        public sealed override string FullName
+        {
+            get
+            {
+#if ENABLE_REFLECTION_TRACE
+                if (ReflectionTrace.Enabled)
+                    ReflectionTrace.TypeInfo_FullName(this);
+#endif
+
+                Debug.Assert(!IsConstructedGenericType);
+                Debug.Assert(!IsGenericParameter);
+                Debug.Assert(!HasElementType);
+
+                string name = Name;
+
+                Type declaringType = this.DeclaringType;
+                if (declaringType != null)
+                {
+                    string declaringTypeFullName = declaringType.FullName;
+                    return declaringTypeFullName + "+" + name;
+                }
+
+                string ns = Namespace;
+                if (ns == null)
+                    return name;
+                return ns + "." + name;
+            }
+        }
+
+        public sealed override Type GetGenericTypeDefinition()
+        {
+            if (_typeDefinition.GenericParameters.GetEnumerator().MoveNext())
+                return this.AsType();
+            return base.GetGenericTypeDefinition();
+        }
+
+        public sealed override StructLayoutAttribute StructLayoutAttribute
+        {
+            get
+            {
+                const int DefaultPackingSize = 8;
+
+                // Note: CoreClr checks HasElementType and IsGenericParameter in addition to IsInterface but those properties cannot be true here as this
+                // RuntimeTypeInfo subclass is solely for TypeDef types.)
+                if (IsInterface)
+                    return null;
+
+                TypeAttributes attributes = Attributes;
+
+                LayoutKind layoutKind;
+                switch (attributes & TypeAttributes.LayoutMask)
+                {
+                    case TypeAttributes.ExplicitLayout: layoutKind = LayoutKind.Explicit; break;
+                    case TypeAttributes.AutoLayout: layoutKind = LayoutKind.Auto; break;
+                    case TypeAttributes.SequentialLayout: layoutKind = LayoutKind.Sequential; break;
+                    default: layoutKind = LayoutKind.Auto;  break;
+                }
+
+                CharSet charSet;
+                switch (attributes & TypeAttributes.StringFormatMask)
+                {
+                    case TypeAttributes.AnsiClass: charSet = CharSet.Ansi; break;
+                    case TypeAttributes.AutoClass: charSet = CharSet.Auto; break;
+                    case TypeAttributes.UnicodeClass: charSet = CharSet.Unicode; break;
+                    default: charSet = CharSet.None;  break;
+                }
+
+                int pack = _typeDefinition.PackingSize;
+                int size = unchecked((int)(_typeDefinition.Size));
+
+                // Metadata parameter checking should not have allowed 0 for packing size.
+                // The runtime later converts a packing size of 0 to 8 so do the same here
+                // because it's more useful from a user perspective. 
+                if (pack == 0)
+                    pack = DefaultPackingSize;
+
+                return new StructLayoutAttribute(layoutKind)
+                {
+                    CharSet = charSet,
+                    Pack = pack,
+                    Size = size,
+                };
+            }
+        }
+
+        public sealed override string ToString()
+        {
+            StringBuilder sb = null;
+
+            foreach (GenericParameterHandle genericParameterHandle in _typeDefinition.GenericParameters)
+            {
+                if (sb == null)
+                {
+                    sb = new StringBuilder(FullName);
+                    sb.Append('[');
+                }
+                else
+                {
+                    sb.Append(',');
+                }
+
+                sb.Append(genericParameterHandle.GetGenericParameter(_reader).Name.GetString(_reader));
+            }
+
+            if (sb == null)
+            {
+                return FullName;
+            }
+            else
+            {
+                return sb.Append(']').ToString();
+            }
+        }
+
+        protected sealed override TypeAttributes GetAttributeFlagsImpl()
+        {
+            TypeAttributes attr = _typeDefinition.Flags;
+            return attr;
+        }
+
+        protected sealed override int InternalGetHashCode()
+        {
+            return _typeDefinitionHandle.GetHashCode();
         }
 
         //
@@ -208,31 +318,59 @@ namespace System.Reflection.Runtime.TypeInfos
             }
         }
 
-        internal sealed override RuntimeType[] RuntimeGenericTypeParameters
+        internal sealed override Type InternalDeclaringType
         {
             get
             {
-                LowLevelList<RuntimeType> genericTypeParameters = new LowLevelList<RuntimeType>();
+                RuntimeTypeInfo declaringType = null;
+                TypeDefinitionHandle enclosingTypeDefHandle = _typeDefinition.EnclosingType;
+                if (!enclosingTypeDefHandle.IsNull(_reader))
+                {
+                    declaringType = enclosingTypeDefHandle.ResolveTypeDefinition(_reader);
+                }
+                return declaringType;
+            }
+        }
+
+        internal sealed override string InternalFullNameOfAssembly
+        {
+            get
+            {
+                NamespaceChain namespaceChain = NamespaceChain;
+                ScopeDefinitionHandle scopeDefinitionHandle = namespaceChain.DefiningScope;
+                return scopeDefinitionHandle.ToRuntimeAssemblyName(_reader).FullName;
+            }
+        }
+
+        internal sealed override string InternalGetNameIfAvailable(ref Type rootCauseForFailure)
+        {
+            ConstantStringValueHandle nameHandle = _typeDefinition.Name;
+            string name = nameHandle.GetString(_reader);
+
+            return name.EscapeTypeNameIdentifier();
+        }
+
+        internal sealed override RuntimeTypeHandle InternalTypeHandleIfAvailable
+        {
+            get
+            {
+                return _typeHandle;
+            }
+        }
+
+        internal sealed override RuntimeTypeInfo[] RuntimeGenericTypeParameters
+        {
+            get
+            {
+                LowLevelList<RuntimeTypeInfo> genericTypeParameters = new LowLevelList<RuntimeTypeInfo>();
 
                 foreach (GenericParameterHandle genericParameterHandle in _typeDefinition.GenericParameters)
                 {
-                    RuntimeType genericParameterType = RuntimeTypeUnifierEx.GetRuntimeGenericParameterTypeForTypes(this, genericParameterHandle);
+                    RuntimeTypeInfo genericParameterType = RuntimeGenericParameterTypeInfoForTypes.GetRuntimeGenericParameterTypeInfoForTypes(this, genericParameterHandle);
                     genericTypeParameters.Add(genericParameterType);
                 }
 
                 return genericTypeParameters.ToArray();
-            }
-        }
-
-        internal sealed override RuntimeType RuntimeType
-        {
-            get
-            {
-                if (_lazyType == null)
-                {
-                    _lazyType = this.ReflectionDomain.ResolveTypeDefinition(_reader, _typeDefinitionHandle);
-                }
-                return _lazyType;
             }
         }
 
@@ -336,9 +474,10 @@ namespace System.Reflection.Runtime.TypeInfos
             }
         }
 
-        private MetadataReader _reader;
-        private TypeDefinitionHandle _typeDefinitionHandle;
-        private TypeDefinition _typeDefinition;
+        private readonly MetadataReader _reader;
+        private readonly TypeDefinitionHandle _typeDefinitionHandle;
+        private readonly TypeDefinition _typeDefinition;
+        private readonly RuntimeTypeHandle _typeHandle;
 
         private NamespaceChain NamespaceChain
         {
@@ -352,9 +491,7 @@ namespace System.Reflection.Runtime.TypeInfos
 
         private volatile NamespaceChain _lazyNamespaceChain;
 
-        private volatile RuntimeType _lazyType;
-
-        private static NamedTypeToGuidTable _namedTypeToGuidTable = new NamedTypeToGuidTable();
+        private static readonly NamedTypeToGuidTable s_namedTypeToGuidTable = new NamedTypeToGuidTable();
         private sealed class NamedTypeToGuidTable : ConcurrentUnifier<RuntimeNamedTypeInfo, Tuple<Guid>>
         {
             protected sealed override Tuple<Guid> Factory(RuntimeNamedTypeInfo key)

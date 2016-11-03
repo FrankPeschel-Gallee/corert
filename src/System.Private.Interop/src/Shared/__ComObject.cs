@@ -438,7 +438,7 @@ namespace System
         {
             get
             {
-                Contract.Assert(IsGCPressureSet, "GCPressureRange.Unknown");
+                Debug.Assert(IsGCPressureSet, "GCPressureRange.Unknown");
 
                 switch (m_flags & ComObjectFlags.GCPressureWinRT_Mask)
                 {
@@ -1214,6 +1214,12 @@ namespace System
 
             try
             {
+                if (InteropEventProvider.IsEnabled())
+                    InteropEventProvider.Log.TaskRCWQueryInterface(
+                        (long)InteropExtensions.GetObjectID(this), (long)ContextCookie.pCookie,
+                        intfGuid,
+                        interfaceType.GetRawValue().ToInt64());
+
                 if (pComPtr == default(IntPtr))
                 {
                     if (InteropEventProvider.IsEnabled())
@@ -1258,7 +1264,7 @@ namespace System
             {
                 // If this is a WinRT secenario and the failure is E_NOINTERFACE then display the standard
                 // InvalidCastException as most developers are not interested in IID's or HRESULTS
-                return new InvalidCastException(String.Format(SR.InvalidCast_WinRT, comObjectDisplayName, interfaceDisplayName));
+                return new InvalidCastException(SR.Format(SR.InvalidCast_WinRT, comObjectDisplayName, interfaceDisplayName));
             }
             else
             {
@@ -1273,7 +1279,7 @@ namespace System
                     errorMessage = String.Format("{0} ({1} 0x{2:X})", errorMessage, SR.Excep_FromHResult, hr);
                 }
 
-                return new InvalidCastException(String.Format(
+                return new InvalidCastException(SR.Format(
                     SR.InvalidCast_Com,
                     comObjectDisplayName,
                     interfaceDisplayName,
@@ -1284,7 +1290,7 @@ namespace System
             string errorMessage = String.Format("({0} 0x{1:X})", SR.Excep_FromHResult, hr);
             string interfaceDisplayName = interfaceType.GetDisplayName();
 
-            return new InvalidCastException(String.Format(
+            return new InvalidCastException(SR.Format(
                    SR.InvalidCast_Com,
                    "__ComObject",
                    interfaceDisplayName,
@@ -1990,8 +1996,7 @@ namespace System.Runtime.InteropServices
             [MethodImpl(MethodImplOptions.NoInlining)]
             get
             {
-#if ENABLE_WINRT
-
+#if ENABLE_MIN_WINRT
                 IntPtr pCookie;
                 int hr = ExternalInterop.CoGetContextToken(out pCookie);
                 if (hr < 0)
@@ -2114,7 +2119,7 @@ namespace System.Runtime.InteropServices
                 m_type = type;
             }
 
-            Contract.Assert(!IsUnknown, "m_type can't be null");
+            Debug.Assert(!IsUnknown, "m_type can't be null");
         }
 
         /// <summary>
@@ -2177,7 +2182,7 @@ namespace System.Runtime.InteropServices
         /// <returns></returns>
         private ComMarshalingType GetComMarshalingBehaviorAtRuntime()
         {
-            Contract.Assert(IsUnknown, "ComMarshalingType is not ComMarshalingType.Uknown");
+            Debug.Assert(IsUnknown, "ComMarshalingType is not ComMarshalingType.Uknown");
 
             if (McgComHelpers.IsFreeThreaded(m_pComPtr))
             {
@@ -2252,7 +2257,7 @@ namespace System.Runtime.InteropServices
         /// <returns>A AddRef-ed interface pointer that can be used under current context</returns>
         private IntPtr GetAddRefedComPointerForCurrentContext()
         {
-            Contract.Assert(IsStandard, "ComMarshalingType is not standard");
+            Debug.Assert(IsStandard, "ComMarshalingType is not standard");
             bool failedBefore = false;
             IntPtr pStream = IntPtr.Zero;
 
@@ -2514,7 +2519,7 @@ namespace System.Runtime.InteropServices
             m_cookie = cookie;
             m_pObjectContext = IntPtr.Zero;
 
-#if !CORECLR
+#if ENABLE_MIN_WINRT
             int hr = ExternalInterop.CoGetObjectContext(ref Interop.COM.IID_IUnknown, out m_pObjectContext);
             if (hr < 0)
             {
@@ -3399,7 +3404,7 @@ namespace System.Runtime.InteropServices
         }
     }
 
-#if ENABLE_WINRT
+#if ENABLE_MIN_WINRT
     /// <summary>
     /// WinRT factory cache item caching the context + factory RCW
     /// </summary>

@@ -2,23 +2,23 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-    using System;
-    using System.Collections;
-    using System.Collections.Generic;
-    using System.ComponentModel;
-    using System.Diagnostics;
-    using System.Reflection;
-    using System.Runtime.InteropServices;
-    using System.Runtime.InteropServices.WindowsRuntime;
-    using System.Runtime.CompilerServices;
-    using System.Threading;
-    using System.Text;
-    using System.Runtime;
-    using System.Diagnostics.Contracts;
-    using Internal.NativeFormat;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.WindowsRuntime;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Text;
+using System.Runtime;
+
+using Internal.NativeFormat;
 
 #if ENABLE_WINRT
-    using global::Windows.UI.Xaml.Data;
+using global::Windows.UI.Xaml.Data;
 #endif
 
 namespace System.Runtime.InteropServices
@@ -1191,7 +1191,7 @@ namespace System.Runtime.InteropServices
                 return Interop.COM.E_POINTER;
 
             object target = ComCallableObject.FromThisPointer(pComThis).TargetObject;
-            Contract.Requires(target != null);
+            Debug.Assert(target != null);
 
             try
             {
@@ -1371,7 +1371,7 @@ namespace System.Runtime.InteropServices
         }
     }
 
-#if ENABLE_WINRT
+#if ENABLE_MIN_WINRT
     unsafe struct __com_IActivationFactoryInternal
     {
 #pragma warning disable 649 // Field 'blah' is never assigned to, and will always have its default value null
@@ -1445,7 +1445,7 @@ namespace System.Runtime.InteropServices
             }
         }
     }
-#endif
+#endif // ENABLE_MIN_WINRT
 
 
     unsafe struct __com_IManagedActivationFactory

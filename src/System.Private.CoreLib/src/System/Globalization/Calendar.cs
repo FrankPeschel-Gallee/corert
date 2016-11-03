@@ -2,9 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System;
-using System.Runtime.CompilerServices;
-using System.Globalization;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 
 namespace System.Globalization
@@ -31,7 +29,7 @@ namespace System.Globalization
 
 
     [System.Runtime.InteropServices.ComVisible(true)]
-    public abstract class Calendar
+    public abstract class Calendar : ICloneable
     {
         // Number of 100ns (10E-7 second) ticks per time unit
         internal const long TicksPerMillisecond = 10000;
@@ -61,7 +59,7 @@ namespace System.Globalization
         internal const long MaxMillis = (long)DaysTo10000 * MillisPerDay;
 
 
-        internal int m_currentEraValue = -1;
+        private int _currentEraValue = -1;
 
 
         private bool _isReadOnly = false;
@@ -133,11 +131,11 @@ namespace System.Globalization
         //
         //  Clone
         //
-        //  Is the implementation of IColnable.
+        //  Is the implementation of ICloneable.
         //
         ////////////////////////////////////////////////////////////////////////
         [System.Runtime.InteropServices.ComVisible(false)]
-        internal virtual Object Clone()
+        public virtual object Clone()
         {
             object o = MemberwiseClone();
             ((Calendar)o).SetReadOnlyState(false);
@@ -193,12 +191,12 @@ namespace System.Globalization
             get
             {
                 // The following code assumes that the current era value can not be -1.
-                if (m_currentEraValue == -1)
+                if (_currentEraValue == -1)
                 {
-                    Contract.Assert(BaseCalendarID != CalendarId.UNINITIALIZED_VALUE, "[Calendar.CurrentEraValue] Expected a real calendar ID");
-                    m_currentEraValue = CalendarData.GetCalendarData(BaseCalendarID).iCurrentEra;
+                    Debug.Assert(BaseCalendarID != CalendarId.UNINITIALIZED_VALUE, "[Calendar.CurrentEraValue] Expected a real calendar ID");
+                    _currentEraValue = CalendarData.GetCalendarData(BaseCalendarID).iCurrentEra;
                 }
-                return (m_currentEraValue);
+                return (_currentEraValue);
             }
         }
 
@@ -510,7 +508,7 @@ namespace System.Globalization
             // this value can be less than 0.  It's fine since we are making it positive again in calculating offset.
             int dayForJan1 = (int)GetDayOfWeek(time) - (dayOfYear % 7);
             int offset = (dayForJan1 - firstDayOfWeek + 14) % 7;
-            Contract.Assert(offset >= 0, "Calendar.GetFirstDayWeekOfYear(): offset >= 0");
+            Debug.Assert(offset >= 0, "Calendar.GetFirstDayWeekOfYear(): offset >= 0");
             return ((dayOfYear + offset) / 7 + 1);
         }
 

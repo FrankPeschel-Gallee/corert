@@ -2,21 +2,20 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Text;
-using global::System.Reflection;
-using global::System.Diagnostics;
-using global::System.Collections.Generic;
-using global::System.Reflection.Runtime.General;
-using global::System.Reflection.Runtime.TypeInfos;
-using global::System.Reflection.Runtime.ParameterInfos;
-using global::System.Reflection.Runtime.CustomAttributes;
+using System;
+using System.Text;
+using System.Reflection;
+using System.Diagnostics;
+using System.Collections.Generic;
+using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.TypeInfos;
+using System.Reflection.Runtime.ParameterInfos;
+using System.Reflection.Runtime.CustomAttributes;
 
-using global::Internal.Reflection.Core;
-using global::Internal.Reflection.Core.Execution;
-using global::Internal.Reflection.Core.NonPortable;
+using Internal.Reflection.Core;
+using Internal.Reflection.Core.Execution;
 
-using global::Internal.Metadata.NativeFormat;
+using Internal.Metadata.NativeFormat;
 
 namespace System.Reflection.Runtime.MethodInfos
 {
@@ -73,24 +72,24 @@ namespace System.Reflection.Runtime.MethodInfos
         }
 
         // Compute the ToString() value in a pay-to-play-safe way.
-        public String ComputeToString(MethodBase contextMethod, RuntimeType[] methodTypeArguments)
+        public String ComputeToString(MethodBase contextMethod, RuntimeTypeInfo[] methodTypeArguments)
         {
-            RuntimeParameterInfo[] runtimeParametersAndReturn = this.GetRuntimeParametersAndReturn(contextMethod, methodTypeArguments);
-            return ComputeToString(contextMethod, methodTypeArguments, runtimeParametersAndReturn);
+            RuntimeParameterInfo returnParameter;
+            RuntimeParameterInfo[] parameters = this.GetRuntimeParameters(contextMethod, methodTypeArguments, out returnParameter);
+            return ComputeToString(contextMethod, methodTypeArguments, parameters, returnParameter);
         }
 
-
-        public static String ComputeToString(MethodBase contextMethod, RuntimeType[] methodTypeArguments, RuntimeParameterInfo[] runtimeParametersAndReturn)
+        public static String ComputeToString(MethodBase contextMethod, RuntimeTypeInfo[] methodTypeArguments, RuntimeParameterInfo[] parameters, RuntimeParameterInfo returnParameter)
         {
             StringBuilder sb = new StringBuilder(30);
-            sb.Append(runtimeParametersAndReturn[0].ParameterTypeString);
+            sb.Append(returnParameter == null ? "Void" : returnParameter.ParameterTypeString);  // ConstructorInfos allowed to pass in null rather than craft a ReturnParameterInfo that's always of type void.
             sb.Append(' ');
             sb.Append(contextMethod.Name);
             if (methodTypeArguments.Length != 0)
             {
                 String sep = "";
                 sb.Append('[');
-                foreach (RuntimeType methodTypeArgument in methodTypeArguments)
+                foreach (RuntimeTypeInfo methodTypeArgument in methodTypeArguments)
                 {
                     sb.Append(sep);
                     sep = ",";
@@ -102,7 +101,7 @@ namespace System.Reflection.Runtime.MethodInfos
                 sb.Append(']');
             }
             sb.Append('(');
-            sb.Append(ComputeParametersString(runtimeParametersAndReturn, 1));
+            sb.Append(ComputeParametersString(parameters));
             sb.Append(')');
 
             return sb.ToString();
@@ -110,14 +109,14 @@ namespace System.Reflection.Runtime.MethodInfos
 
         // Used by method and property ToString() methods to display the list of parameter types. Replicates the behavior of MethodBase.ConstructParameters()
         // but in a pay-to-play-safe way.
-        public static String ComputeParametersString(RuntimeParameterInfo[] runtimeParametersAndReturn, int startIndex)
+        public static String ComputeParametersString(RuntimeParameterInfo[] parameters)
         {
             StringBuilder sb = new StringBuilder(30);
-            for (int i = startIndex; i < runtimeParametersAndReturn.Length; i++)
+            for (int i = 0; i < parameters.Length; i++)
             {
-                if (i != startIndex)
+                if (i != 0)
                     sb.Append(", ");
-                String parameterTypeString = runtimeParametersAndReturn[i].ParameterTypeString;
+                String parameterTypeString = parameters[i].ParameterTypeString;
 
                 // Legacy: Why use "ByRef" for by ref parameters? What language is this? 
                 // VB uses "ByRef" but it should precede (not follow) the parameter name.
@@ -141,23 +140,19 @@ namespace System.Reflection.Runtime.MethodInfos
         {
             get
             {
-                IEnumerable<CustomAttributeData> customAttributes = RuntimeCustomAttributeData.GetCustomAttributes(_definingTypeInfo.ReflectionDomain, _reader, _method.CustomAttributes);
+                IEnumerable<CustomAttributeData> customAttributes = RuntimeCustomAttributeData.GetCustomAttributes(_reader, _method.CustomAttributes);
                 foreach (CustomAttributeData cad in customAttributes)
                     yield return cad;
-                ExecutionDomain executionDomain = this.DefiningTypeInfo.ReflectionDomain as ExecutionDomain;
-                if (executionDomain != null)
-                {
-                    foreach (CustomAttributeData cad in executionDomain.ExecutionEnvironment.GetPsuedoCustomAttributes(_reader, _methodHandle, _definingTypeInfo.TypeDefinitionHandle))
-                        yield return cad;
-                }
+                foreach (CustomAttributeData cad in ReflectionCoreExecution.ExecutionEnvironment.GetPsuedoCustomAttributes(_reader, _methodHandle, _definingTypeInfo.TypeDefinitionHandle))
+                    yield return cad;
             }
         }
 
-        public RuntimeType DeclaringType
+        public RuntimeTypeInfo DeclaringType
         {
             get
             {
-                return _contextTypeInfo.RuntimeType;
+                return _contextTypeInfo;
             }
         }
 
@@ -186,7 +181,7 @@ namespace System.Reflection.Runtime.MethodInfos
         }
 
         //
-        // Returns the ParameterInfo objects for the return parameter (in element 0), and the method parameters (in elements 1..length).
+        // Returns the ParameterInfo objects for the method parameters and return parameter.
         //
         // The ParameterInfo objects will report "contextMethod" as their Member property and use it to get type variable information from
         // the contextMethod's declaring type. The actual metadata, however, comes from "this."
@@ -195,22 +190,22 @@ namespace System.Reflection.Runtime.MethodInfos
         //
         // Does not array-copy.
         //
-        public RuntimeMethodParameterInfo[] GetRuntimeParametersAndReturn(MethodBase contextMethod, RuntimeType[] methodTypeArguments)
+        public RuntimeParameterInfo[] GetRuntimeParameters(MethodBase contextMethod, RuntimeTypeInfo[] methodTypeArguments, out RuntimeParameterInfo returnParameter)
         {
             MetadataReader reader = _reader;
-            TypeContext typeContext = contextMethod.DeclaringType.GetRuntimeTypeInfo<RuntimeTypeInfo>().TypeContext;
+            TypeContext typeContext = contextMethod.DeclaringType.CastToRuntimeTypeInfo().TypeContext;
             typeContext = new TypeContext(typeContext.GenericTypeArguments, methodTypeArguments);
-            ReflectionDomain reflectionDomain = _definingTypeInfo.ReflectionDomain;
             MethodSignature methodSignature = this.MethodSignature;
-            LowLevelList<Handle> typeSignatures = new LowLevelList<Handle>(10);
-            typeSignatures.Add(methodSignature.ReturnType.GetReturnTypeSignature(_reader).Type);
-            foreach (ParameterTypeSignatureHandle parameterTypeSignatureHandle in methodSignature.Parameters)
+            Handle[] typeSignatures = new Handle[methodSignature.Parameters.Count + 1];
+            typeSignatures[0] = methodSignature.ReturnType;
+            int paramIndex = 1;
+            foreach (Handle parameterTypeSignatureHandle in methodSignature.Parameters)
             {
-                typeSignatures.Add(parameterTypeSignatureHandle.GetParameterTypeSignature(_reader).Type);
+                typeSignatures[paramIndex++] = parameterTypeSignatureHandle;
             }
-            int count = typeSignatures.Count;
+            int count = typeSignatures.Length;
 
-            RuntimeMethodParameterInfo[] result = new RuntimeMethodParameterInfo[count];
+            VirtualRuntimeParameterInfoArray result = new VirtualRuntimeParameterInfoArray(count);
             foreach (ParameterHandle parameterHandle in _method.Parameters)
             {
                 Parameter parameterRecord = parameterHandle.GetParameter(_reader);
@@ -221,7 +216,6 @@ namespace System.Reflection.Runtime.MethodInfos
                         _methodHandle,
                         index - 1,
                         parameterHandle,
-                        reflectionDomain,
                         reader,
                         typeSignatures[index],
                         typeContext);
@@ -234,13 +228,14 @@ namespace System.Reflection.Runtime.MethodInfos
                         RuntimeThinMethodParameterInfo.GetRuntimeThinMethodParameterInfo(
                             contextMethod,
                             i - 1,
-                        reflectionDomain,
                         reader,
                         typeSignatures[i],
                         typeContext);
                 }
             }
-            return result;
+
+            returnParameter = result.First;
+            return result.Remainder;
         }
 
         public String Name
@@ -276,11 +271,11 @@ namespace System.Reflection.Runtime.MethodInfos
 
         public bool Equals(RuntimeMethodCommon other)
         {
-            if (!(this._reader == other._reader))
+            if (!(_reader == other._reader))
                 return false;
-            if (!(this._methodHandle.Equals(other._methodHandle)))
+            if (!(_methodHandle.Equals(other._methodHandle)))
                 return false;
-            if (!(this._contextTypeInfo.Equals(other._contextTypeInfo)))
+            if (!(_contextTypeInfo.Equals(other._contextTypeInfo)))
                 return false;
             return true;
         }
@@ -298,12 +293,42 @@ namespace System.Reflection.Runtime.MethodInfos
             }
         }
 
-        private RuntimeNamedTypeInfo _definingTypeInfo;
-        private MethodHandle _methodHandle;
-        private RuntimeTypeInfo _contextTypeInfo;
+        private readonly RuntimeNamedTypeInfo _definingTypeInfo;
+        private readonly MethodHandle _methodHandle;
+        private readonly RuntimeTypeInfo _contextTypeInfo;
 
-        private MetadataReader _reader;
+        private readonly MetadataReader _reader;
 
-        private Method _method;
+        private readonly Method _method;
+
+        // Helper for GetRuntimeParameters() - array mimic that supports an efficient "array.Skip(1).ToArray()" operation.
+        private struct VirtualRuntimeParameterInfoArray
+        {
+            public VirtualRuntimeParameterInfoArray(int count)
+                : this()
+            {
+                Debug.Assert(count >= 1);
+                Remainder = (count == 1) ? Array.Empty<RuntimeParameterInfo>() : new RuntimeParameterInfo[count - 1];
+            }
+
+            public RuntimeParameterInfo this[int index]
+            {
+                get
+                {
+                    return index == 0 ? First : Remainder[index - 1];
+                }
+                
+                set
+                {
+                    if (index == 0)
+                        First = value;
+                    else
+                        Remainder[index - 1] = value;
+                }
+            }
+
+            public RuntimeParameterInfo First { get; private set; }
+            public RuntimeParameterInfo[] Remainder { get; }
+        }
     }
 }

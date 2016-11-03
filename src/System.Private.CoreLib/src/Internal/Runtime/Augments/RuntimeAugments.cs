@@ -27,7 +27,7 @@ using System.Runtime.CompilerServices;
 using Internal.Reflection.Core.NonPortable;
 using Internal.Runtime.CompilerServices;
 
-using Interlocked = System.Threading.Interlocked;
+using Volatile = System.Threading.Volatile;
 
 namespace Internal.Runtime.Augments
 {
@@ -140,18 +140,12 @@ namespace Internal.Runtime.Augments
                 }
             }
 
-#if REAL_MULTIDIM_ARRAYS
             // Create a local copy of the lenghts that cannot be motified by the caller
             int * pLengths = stackalloc int[lengths.Length];
             for (int i = 0; i < lengths.Length; i++)
                 pLengths[i] = lengths[i];
 
             return Array.NewMultiDimArray(typeHandleForArrayType.ToEETypePtr(), pLengths, lengths.Length);
-#else
-            MDArray mdArray = (MDArray)(NewObject(typeHandleForArrayType));
-            mdArray.MDInitialize(lengths);
-            return mdArray;
-#endif
         }
 
         public static IntPtr GetAllocateObjectHelperForType(RuntimeTypeHandle type)
@@ -236,11 +230,7 @@ namespace Internal.Runtime.Augments
 
         public static RuntimeTypeHandle CreateRuntimeTypeHandle(IntPtr ldTokenResult)
         {
-#if CLR_RUNTIMETYPEHANDLE // CORERT-TODO: RuntimeTypeHandle
-            throw new NotImplementedException();
-#else
             return new RuntimeTypeHandle(new EETypePtr(ldTokenResult));
-#endif
         }
 
         public unsafe static IntPtr GetThreadStaticFieldAddress(RuntimeTypeHandle typeHandle, IntPtr fieldCookie)
@@ -278,15 +268,14 @@ namespace Internal.Runtime.Augments
             }
         }
 
-        public static void StoreReferenceTypeField(IntPtr address, Object fieldValue)
+        public static unsafe void StoreReferenceTypeField(IntPtr address, Object fieldValue)
         {
-            // Doing an interlocked exchange makes sure there is a proper memory barrier
-            Interlocked.Exchange<Object>(address, fieldValue);
+            Volatile.Write<Object>(ref Unsafe.As<IntPtr, Object>(ref *(IntPtr *)address), fieldValue);
         }
 
-        public static Object LoadReferenceTypeField(IntPtr address)
+        public static unsafe Object LoadReferenceTypeField(IntPtr address)
         {
-            return Interlocked.CompareExchange<Object>(address, null, null);
+            return Volatile.Read<Object>(ref Unsafe.As<IntPtr, Object>(ref *(IntPtr *)address));
         }
 
         public unsafe static void StoreReferenceTypeField(Object obj, int fieldOffset, Object fieldValue)
@@ -310,9 +299,27 @@ namespace Internal.Runtime.Augments
         }
 
         [DebuggerGuidedStepThroughAttribute]
-        public static object CallDynamicInvokeMethod(object thisPtr, IntPtr methodToCall, object thisPtrDynamicInvokeMethod, IntPtr dynamicInvokeHelperMethod, IntPtr dynamicInvokeHelperGenericDictionary, string defaultValueString, object[] parameters, bool invokeMethodHelperIsThisCall, bool methodToCallIsThisCall)
+        public static object CallDynamicInvokeMethod(
+            object thisPtr,
+            IntPtr methodToCall,
+            object thisPtrDynamicInvokeMethod,
+            IntPtr dynamicInvokeHelperMethod,
+            IntPtr dynamicInvokeHelperGenericDictionary,
+            object defaultParametersContext,
+            object[] parameters,
+            bool invokeMethodHelperIsThisCall,
+            bool methodToCallIsThisCall)
         {
-            object result = InvokeUtils.CallDynamicInvokeMethod(thisPtr, methodToCall, thisPtrDynamicInvokeMethod, dynamicInvokeHelperMethod, dynamicInvokeHelperGenericDictionary, defaultValueString, parameters, invokeMethodHelperIsThisCall, methodToCallIsThisCall);
+            object result = InvokeUtils.CallDynamicInvokeMethod(
+                thisPtr,
+                methodToCall,
+                thisPtrDynamicInvokeMethod,
+                dynamicInvokeHelperMethod,
+                dynamicInvokeHelperGenericDictionary,
+                defaultParametersContext,
+                parameters,
+                invokeMethodHelperIsThisCall,
+                methodToCallIsThisCall);
             System.Diagnostics.DebugAnnotations.PreviousCallContainsDebuggerStepInCode();
             return result;
         }
@@ -323,38 +330,10 @@ namespace Internal.Runtime.Augments
             ClassConstructorRunner.EnsureClassConstructorRun(context);
         }
 
-#if !REAL_MULTIDIM_ARRAYS
-        public static bool GetMdArrayRankTypeHandleIfSupported(int rank, out RuntimeTypeHandle mdArrayTypeHandle)
+        public static object GetEnumValue(Enum e)
         {
-            switch (rank)
-            {
-                case 2:
-                    mdArrayTypeHandle = typeof(MDArrayRank2<>).TypeHandle;
-                    return true;
-                case 3:
-                    mdArrayTypeHandle = typeof(MDArrayRank3<>).TypeHandle;
-                    return true;
-                case 4:
-                    mdArrayTypeHandle = typeof(MDArrayRank4<>).TypeHandle;
-                    return true;
-                default:
-                    mdArrayTypeHandle = default(RuntimeTypeHandle);
-                    return false;
-            }
+            return e.GetValue();
         }
-#endif
-
-        public static RuntimeTypeHandle GetTypeHandleIfAvailable(Type type)
-        {
-            RuntimeType runtimeType = type as RuntimeType;
-            if (runtimeType == null)
-                return default(RuntimeTypeHandle);
-            RuntimeTypeHandle runtimeTypeHandle;
-            if (!runtimeType.InternalTryGetTypeHandle(out runtimeTypeHandle))
-                return default(RuntimeTypeHandle);
-            return runtimeTypeHandle;
-        }
-
 
         public static RuntimeTypeHandle GetRelatedParameterTypeHandle(RuntimeTypeHandle parameterTypeHandle)
         {
@@ -540,25 +519,6 @@ namespace Internal.Runtime.Augments
             }
         }
 
-        public unsafe static void SetInstantiation(RuntimeTypeHandle typeHandle, RuntimeTypeHandle genericTypeDefinitionHandle, RuntimeTypeHandle[] genericTypeArgumentHandles)
-        {
-            EETypePtr eeTypeDefinition = CreateEETypePtr(genericTypeDefinitionHandle);
-            EETypePtr eeType = CreateEETypePtr(typeHandle);
-
-            int arity = genericTypeArgumentHandles.Length;
-            EETypePtr* eeTypeArguments = stackalloc EETypePtr[genericTypeArgumentHandles.Length];
-            for (int i = 0; i < arity; i++)
-            {
-                eeTypeArguments[i] = CreateEETypePtr(genericTypeArgumentHandles[i]);
-            }
-
-            if (!RuntimeImports.RhSetGenericInstantiation(eeType, eeTypeDefinition, arity, eeTypeArguments))
-            {
-                throw new OutOfMemoryException();
-            }
-        }
-
-#if CORERT
         public unsafe static RuntimeTypeHandle GetGenericInstantiation(RuntimeTypeHandle typeHandle, out RuntimeTypeHandle[] genericTypeArgumentHandles)
         {
             EETypePtr eeType = typeHandle.ToEETypePtr();
@@ -574,7 +534,6 @@ namespace Internal.Runtime.Augments
 
             return new RuntimeTypeHandle(eeType.GenericDefinition);
         }
-#endif
 
         public static bool IsGenericType(RuntimeTypeHandle typeHandle)
         {
@@ -733,6 +692,54 @@ namespace Internal.Runtime.Augments
         {
             return TypeLoaderExports.RegisterResolutionFunction(functionPointer);
         }
+        
+        // IL Code: stobj
+        public unsafe static void Write<T>(IntPtr destination, T value, RuntimeTypeHandle typeHandle)
+        {
+            if (RuntimeAugments.IsValueType(typeHandle))
+            {
+                RuntimeAugments.StoreValueTypeField(destination, (object)value, typeHandle);
+            }
+            else
+            {
+                RuntimeAugments.StoreReferenceTypeField(destination, (object)value);
+            }
+        }
+
+        // IL Code:ldobj
+        public unsafe static T Read<T>(IntPtr source, RuntimeTypeHandle typeHandle)
+        {
+            if (RuntimeAugments.IsValueType(typeHandle))
+            {
+                return (T)RuntimeAugments.LoadValueTypeField(source, typeHandle);
+            }
+            else
+            {
+                return (T)RuntimeAugments.LoadReferenceTypeField(source);
+            }
+        }
+
+        // IL code: sizeof
+        public unsafe static int SizeOf<T>(RuntimeTypeHandle typeHandle)
+        {
+            if (RuntimeAugments.IsValueType(typeHandle))
+            {
+                return typeHandle.GetValueTypeSize();
+            }
+            else
+            {
+                return sizeof(IntPtr);
+            }
+        }
+
+        // IL code: conv.u
+        public unsafe static IntPtr AsPointer<T>(ref T value)
+        {
+            fixed (IntPtr* pValue = &value.m_pEEType)
+            {
+                return (IntPtr)pValue;
+            }
+        }
 
         //==============================================================================================
         // Internals
@@ -777,27 +784,6 @@ namespace Internal.Runtime.Augments
             }
         }
 
-        internal static RuntimeTypeHandle[] ToTypeHandleArray(this RuntimeType[] runtimeTypes)
-        {
-            RuntimeTypeHandle[] runtimeTypeHandles = new RuntimeTypeHandle[runtimeTypes.Length];
-            for (int i = 0; i < runtimeTypes.Length; i++)
-                runtimeTypeHandles[i] = runtimeTypes[i].TypeHandle;
-            return runtimeTypeHandles;
-        }
-
-        internal static RuntimeType ToRuntimeType(this RuntimeTypeHandle runtimeTypeHandle)
-        {
-            return ReflectionCoreNonPortable.GetTypeForRuntimeTypeHandle(runtimeTypeHandle);
-        }
-
-        internal static RuntimeType[] ToRuntimeTypeArray(this RuntimeTypeHandle[] runtimeTypeHandles)
-        {
-            RuntimeType[] runtimeTypes = new RuntimeType[runtimeTypeHandles.Length];
-            for (int i = 0; i < runtimeTypes.Length; i++)
-                runtimeTypes[i] = runtimeTypeHandles[i].ToRuntimeType();
-            return runtimeTypes;
-        }
-
         private static volatile ReflectionExecutionDomainCallbacks s_reflectionExecutionDomainCallbacks;
         private static TypeLoaderCallbacks s_typeLoaderCallbacks;
 
@@ -809,12 +795,6 @@ namespace Internal.Runtime.Augments
         public static void GenerateExceptionInformationForDump(Exception currentException, IntPtr exceptionCCWPtr)
         {
             RuntimeExceptionHelpers.GenerateExceptionInformationForDump(currentException, exceptionCCWPtr);
-        }
-
-        [Intrinsic]
-        public static object ConvertIntPtrToObjectReference(IntPtr pointerToObject)
-        {
-            return ConvertIntPtrToObjectReference(pointerToObject);
         }
 
         public unsafe static RuntimeTypeHandle GetRuntimeTypeHandleFromObjectReference(object obj)
@@ -864,6 +844,14 @@ namespace Internal.Runtime.Augments
             RuntimeImports.RhCallDescrWorker(callDescr);
         }
 
+        [DebuggerStepThrough]
+        /* TEMP workaround due to bug 149078 */
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void CallDescrWorkerNative(IntPtr callDescr)
+        {
+            RuntimeImports.RhCallDescrWorkerNative(callDescr);
+        }
+
         /// <summary>
         /// This method opens a file if it exists. For console apps, ILC will inject a call to
         /// InitializeDesktopSupport in StartupCodeTrigger. This will set up the
@@ -893,6 +881,10 @@ namespace Internal.Runtime.Augments
         internal class RawCalliHelper
         {
             public static unsafe void Call<T>(System.IntPtr pfn, void* arg1, ref T arg2)
+            {
+                // This will be filled in by an IL transform
+            }
+            public static unsafe void Call<T,U>(System.IntPtr pfn, void* arg1, ref T arg2, ref U arg3)
             {
                 // This will be filled in by an IL transform
             }
@@ -933,6 +925,48 @@ namespace Internal.Runtime.Augments
                 RuntimeImports.RhDisableConservativeReportingRegion(pRegionDesc);
             }
         }
+
+        /// <summary>
+        /// This method creates a conservatively reported region and calls a function 
+        /// while that region is conservatively reported. 
+        /// </summary>
+        /// <param name="cbBuffer">size of buffer to allocated (buffer size described in bytes)</param>
+        /// <param name="pfnTargetToInvoke">function pointer to execute. Must have the calling convention void(void* pBuffer, ref T context)</param>
+        /// <param name="context">context to pass to inner function. Passed by-ref to allow for efficient use of a struct as a context.</param>
+        /// <param name="context2">context2 to pass to inner function. Passed by-ref to allow for efficient use of a struct as a context.</param>
+        [DebuggerGuidedStepThroughAttribute]
+        public static void RunFunctionWithConservativelyReportedBuffer<T,U>(int cbBuffer, IntPtr pfnTargetToInvoke, ref T context, ref U context2)
+        {
+            RuntimeImports.ConservativelyReportedRegionDesc regionDesc = new RuntimeImports.ConservativelyReportedRegionDesc();
+            RunFunctionWithConservativelyReportedBufferInternal(cbBuffer, pfnTargetToInvoke, ref context, ref context2, ref regionDesc);
+            System.Diagnostics.DebugAnnotations.PreviousCallContainsDebuggerStepInCode();
+        }
+
+        // Marked as no-inlining so optimizer won't decide to optimize away the fact that pRegionDesc is a pinned interior pointer.
+        // This function must also not make a p/invoke transition, or the fixed statement reporting of the ConservativelyReportedRegionDesc
+        // will be ignored.
+        [DebuggerGuidedStepThroughAttribute]
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static unsafe void RunFunctionWithConservativelyReportedBufferInternal<T,U>(int cbBuffer, IntPtr pfnTargetToInvoke, ref T context, ref U context2, ref RuntimeImports.ConservativelyReportedRegionDesc regionDesc)
+        {
+            fixed (RuntimeImports.ConservativelyReportedRegionDesc* pRegionDesc = &regionDesc)
+            {
+                int cbBufferAligned = (cbBuffer + (sizeof(IntPtr) - 1)) & ~(sizeof(IntPtr) - 1);
+                // The conservative region must be IntPtr aligned, and a multiple of IntPtr in size
+                void* region = stackalloc IntPtr[cbBufferAligned / sizeof(IntPtr)];
+                RuntimeImports.RhInitializeConservativeReportingRegion(pRegionDesc, region, cbBufferAligned);
+
+                RawCalliHelper.Call<T,U>(pfnTargetToInvoke, region, ref context, ref context2);
+                System.Diagnostics.DebugAnnotations.PreviousCallContainsDebuggerStepInCode();
+
+                RuntimeImports.RhDisableConservativeReportingRegion(pRegionDesc);
+            }
+        }
+
+        public static string GetLastResortString(RuntimeTypeHandle typeHandle)
+        {
+            return typeHandle.LastResortToString;
+        }
     }
 }
 
@@ -945,3 +979,4 @@ namespace System.Runtime.InteropServices
         internal static IntPtr AddrOf<T>(T ftn) { throw new PlatformNotSupportedException(); }
     }
 }
+

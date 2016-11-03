@@ -2,14 +2,10 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System;
-using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 using System.Threading;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Diagnostics.Contracts;
 
 namespace System.Globalization
 {
@@ -47,6 +43,8 @@ namespace System.Globalization
     internal partial class CultureData
     {
         private const int undef = -1;
+        private const int LOCALE_CUSTOM_UNSPECIFIED = 0x1000;
+        private const int LOCALE_CUSTOM_DEFAULT = 0x0c00;
 
         // Override flag
         private String _sRealName; // Name you passed in (ie: en-US, en, or de-DE_phoneb)
@@ -91,7 +89,7 @@ namespace System.Globalization
         private int _iNegativePercent = undef; // Negative Percent (0-3)
         private int _iPositivePercent = undef; // Positive Percent (0-11)
         private String _sPercent; // Percent (%) symbol
-        private String _sPerMille; // PerMille (‰) symbol
+        private String _sPerMille; // PerMille symbol
 
         // Currency
         private String _sCurrency; // (user can override) local monetary symbol
@@ -437,10 +435,10 @@ namespace System.Globalization
                     invariant._iNegativePercent = 0;                      // Negative Percent (0-3)
                     invariant._iPositivePercent = 0;                      // Positive Percent (0-11)
                     invariant._sPercent = "%";                    // Percent (%) symbol
-                    invariant._sPerMille = "\x2030";               // PerMille(‰) symbol
+                    invariant._sPerMille = "\x2030";               // PerMille symbol
 
                     // Currency
-                    invariant._sCurrency = "\x00a4";                // local monetary symbol "¤: for international monetary symbol
+                    invariant._sCurrency = "\x00a4";                // local monetary symbol: for international monetary symbol
                     invariant._sIntlMonetarySymbol = "XDR";                  // international monetary symbol (RegionInfo)
                     invariant._iCurrencyDigits = 2;                      // # local monetary fractional digits
                     invariant._iCurrency = 0;                      // positive currency format
@@ -610,7 +608,7 @@ namespace System.Globalization
         {
             get
             {
-                Contract.Assert(_sRealName != null, "[CultureData.CultureName] Expected this.sRealName to be populated by already");
+                Debug.Assert(_sRealName != null, "[CultureData.CultureName] Expected _sRealName to be populated by already");
                 // since windows doesn't know about zh-CHS and zh-CHT,
                 // we leave sRealName == zh-Hanx but we still need to
                 // pretend that it was zh-CHX.
@@ -1089,7 +1087,7 @@ namespace System.Globalization
             }
         }
 
-        // PerMille (‰) symbol
+        // PerMille symbol
         internal String SPERMILLE
         {
             get
@@ -1510,7 +1508,7 @@ namespace System.Globalization
                     // We then have to copy that list to a new array of the right size.
                     // Default calendar should be first
                     CalendarId[] calendars = new CalendarId[23];
-                    Contract.Assert(_sWindowsName != null, "[CultureData.CalendarIds] Expected this.sWindowsName to be populated by already");
+                    Debug.Assert(_sWindowsName != null, "[CultureData.CalendarIds] Expected _sWindowsName to be populated by already");
                     int count = CalendarData.GetCalendars(_sWindowsName, _bUseOverrides, calendars);
 
                     // See if we had a calendar to add.
@@ -1575,7 +1573,7 @@ namespace System.Globalization
 
         internal CalendarData GetCalendar(CalendarId calendarId)
         {
-            Contract.Assert(calendarId > 0 && calendarId <= CalendarId.LAST_CALENDAR,
+            Debug.Assert(calendarId > 0 && calendarId <= CalendarId.LAST_CALENDAR,
                 "[CultureData.GetCalendar] Expect calendarId to be in a valid range");
 
             // arrays are 0 based, calendarIds are 1 based
@@ -1594,7 +1592,7 @@ namespace System.Globalization
             // Make sure that calendar has data
             if (calendarData == null)
             {
-                Contract.Assert(_sWindowsName != null, "[CultureData.GetCalendar] Expected this.sWindowsName to be populated by already");
+                Debug.Assert(_sWindowsName != null, "[CultureData.GetCalendar] Expected _sWindowsName to be populated by already");
                 calendarData = new CalendarData(_sWindowsName, calendarId, this.UseUserOverride);
                 _calendars[calendarIndex] = calendarData;
             }
@@ -1634,7 +1632,7 @@ namespace System.Globalization
             {
                 if (_iReadingLayout == undef)
                 {
-                    Contract.Assert(_sRealName != null, "[CultureData.IsRightToLeft] Expected this.sRealName to be populated by already");
+                    Debug.Assert(_sRealName != null, "[CultureData.IsRightToLeft] Expected _sRealName to be populated by already");
                     _iReadingLayout = GetLocaleInfo(LocaleNumberData.ReadingLayout);
                 }
 
@@ -1655,7 +1653,7 @@ namespace System.Globalization
             {
                 // Note: Custom cultures might point at another culture's textinfo, however windows knows how
                 // to redirect it to the desired textinfo culture, so this is OK.
-                Contract.Assert(_sWindowsName != null, "[CultureData.STEXTINFO] Expected this.sWindowsName to be populated by already");
+                Debug.Assert(_sWindowsName != null, "[CultureData.STEXTINFO] Expected _sWindowsName to be populated by already");
                 return (_sWindowsName);
             }
         }
@@ -1665,7 +1663,7 @@ namespace System.Globalization
         {
             get
             {
-                Contract.Assert(_sWindowsName != null, "[CultureData.SCOMPAREINFO] Expected this.sWindowsName to be populated by already");
+                Debug.Assert(_sWindowsName != null, "[CultureData.SCOMPAREINFO] Expected _sWindowsName to be populated by already");
                 return (_sWindowsName);
             }
         }
@@ -1722,21 +1720,21 @@ namespace System.Globalization
         // All of our era names
         internal String[] EraNames(CalendarId calendarId)
         {
-            Contract.Assert(calendarId > 0, "[CultureData.saEraNames] Expected Calendar.ID > 0");
+            Debug.Assert(calendarId > 0, "[CultureData.saEraNames] Expected Calendar.ID > 0");
 
             return this.GetCalendar(calendarId).saEraNames;
         }
 
         internal String[] AbbrevEraNames(CalendarId calendarId)
         {
-            Contract.Assert(calendarId > 0, "[CultureData.saAbbrevEraNames] Expected Calendar.ID > 0");
+            Debug.Assert(calendarId > 0, "[CultureData.saAbbrevEraNames] Expected Calendar.ID > 0");
 
             return this.GetCalendar(calendarId).saAbbrevEraNames;
         }
 
         internal String[] AbbreviatedEnglishEraNames(CalendarId calendarId)
         {
-            Contract.Assert(calendarId > 0, "[CultureData.saAbbrevEraNames] Expected Calendar.ID > 0");
+            Debug.Assert(calendarId > 0, "[CultureData.saAbbrevEraNames] Expected Calendar.ID > 0");
 
             return this.GetCalendar(calendarId).saAbbrevEnglishEraNames;
         }
@@ -1796,9 +1794,9 @@ namespace System.Globalization
         ////////////////////////////////////////////////////////////////////////////
         private static String UnescapeNlsString(String str, int start, int end)
         {
-            Contract.Requires(str != null);
-            Contract.Requires(start >= 0);
-            Contract.Requires(end >= 0);
+            Debug.Assert(str != null);
+            Debug.Assert(start >= 0);
+            Debug.Assert(end >= 0);
             StringBuilder result = null;
 
             for (int i = start; i < str.Length && i <= end; i++)
@@ -1896,8 +1894,8 @@ namespace System.Globalization
 
         private static int IndexOfTimePart(string format, int startIndex, string timeParts)
         {
-            Contract.Assert(startIndex >= 0, "startIndex cannot be negative");
-            Contract.Assert(timeParts.IndexOfAny(new char[] { '\'', '\\' }) == -1, "timeParts cannot include quote characters");
+            Debug.Assert(startIndex >= 0, "startIndex cannot be negative");
+            Debug.Assert(timeParts.IndexOfAny(new char[] { '\'', '\\' }) == -1, "timeParts cannot include quote characters");
             bool inQuote = false;
             for (int i = startIndex; i < format.Length; ++i)
             {
@@ -1932,6 +1930,11 @@ namespace System.Globalization
             return -1;
         }
 
+        private static bool IsCustomCultureId(int cultureId)
+        {
+            return (cultureId == LOCALE_CUSTOM_DEFAULT || cultureId == LOCALE_CUSTOM_UNSPECIFIED);
+        }
+
         internal void GetNFIValues(NumberFormatInfo nfi)
         {
             if (this.IsInvariantCulture)
@@ -1955,7 +1958,7 @@ namespace System.Globalization
             }
             else
             {
-                Contract.Assert(_sWindowsName != null, "[CultureData.GetNFIValues] Expected this.sWindowsName to be populated by already");
+                Debug.Assert(_sWindowsName != null, "[CultureData.GetNFIValues] Expected _sWindowsName to be populated by already");
                 // String values
                 nfi.positiveSign = GetLocaleInfo(LocaleStringData.PositiveSign);
                 nfi.negativeSign = GetLocaleInfo(LocaleStringData.NegativeSign);
@@ -2135,6 +2138,8 @@ namespace System.Globalization
             NegativeMonetaryNumberFormat = 0x0000001C,
             /// <summary>type of calendar specifier (coresponds to LOCALE_ICALENDARTYPE)</summary>
             CalendarType = 0x00001009,
+            /// <summary>first day of week specifier (coresponds to LOCALE_IFIRSTDAYOFWEEK)</summary>
+            FirstDayOfWeek = 0x0000100C,
             /// <summary>first week of year specifier (coresponds to LOCALE_IFIRSTWEEKOFYEAR)</summary>
             FirstWeekOfYear = 0x0000100D,
             /// <summary>

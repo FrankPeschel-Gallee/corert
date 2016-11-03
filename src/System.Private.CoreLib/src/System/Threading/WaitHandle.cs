@@ -11,13 +11,11 @@
 **
 =============================================================================*/
 
-using System.Threading;
-using System;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace System.Threading
 {
@@ -95,11 +93,6 @@ namespace System.Threading
             Contract.EndContractBlock();
             int ret = WaitOneNative(waitableSafeHandle, millisecondsTimeout);
 
-#if FEATURE_LEGACYNETCFFAS
-            if (AppDomainPauseManager.IsPaused)
-                AppDomainPauseManager.ResumeEvent.WaitOneWithoutFAS();
-#endif // FEATURE_LEGACYNETCFFAS
-
             if (ret == LowLevelThread.WAIT_ABANDONED)
             {
                 ThrowAbandonedMutexException();
@@ -107,30 +100,9 @@ namespace System.Threading
             return (ret != WaitTimeout);
         }
 
-#if FEATURE_LEGACYNETCFFAS
-        internal bool WaitOneWithoutFAS()
-        {
-            // version of waitone without fast application switch (FAS) support
-            // This is required to support the Wait which FAS needs (otherwise recursive dependency comes in)
-            if (safeWaitHandle == null)
-            {
-                throw new ObjectDisposedException(null, SR.ObjectDisposed_Generic);
-            }
-            Contract.EndContractBlock();
-
-            long timeout = -1;
-            int ret = WaitOneNative(safeWaitHandle, (uint)timeout, false);
-            if (ret == WAIT_ABANDONED)
-            {
-                ThrowAbandonedMutexException();
-            }
-            return (ret != WaitTimeout);
-        }
-#endif // FEATURE_LEGACYNETCFFAS
-
         internal static int WaitOneNative(SafeWaitHandle waitableSafeHandle, long millisecondsTimeout)
         {
-            Contract.Assert(millisecondsTimeout >= -1 && millisecondsTimeout <= int.MaxValue);
+            Debug.Assert(millisecondsTimeout >= -1 && millisecondsTimeout <= int.MaxValue);
 
             waitableSafeHandle.DangerousAddRef();
             try
@@ -215,11 +187,6 @@ namespace System.Threading
 #endif
             int ret = WaitMultiple(internalWaitHandles, millisecondsTimeout, true /* waitall*/ );
 
-#if FEATURE_LEGACYNETCFFAS
-            if (AppDomainPauseManager.IsPaused)
-                AppDomainPauseManager.ResumeEvent.WaitOneWithoutFAS();
-#endif // FEATURE_LEGACYNETCFFAS
-
             if ((LowLevelThread.WAIT_ABANDONED <= ret) && (LowLevelThread.WAIT_ABANDONED + internalWaitHandles.Length > ret))
             {
                 //In the case of WaitAll the OS will only provide the
@@ -290,11 +257,6 @@ namespace System.Threading
             waitHandles = null;
 #endif
             int ret = WaitMultiple(internalWaitHandles, millisecondsTimeout, false /* waitany*/ );
-
-#if FEATURE_LEGACYNETCFFAS
-            if (AppDomainPauseManager.IsPaused)
-                AppDomainPauseManager.ResumeEvent.WaitOneWithoutFAS();
-#endif // FEATURE_LEGACYNETCFFAS
 
             if ((LowLevelThread.WAIT_ABANDONED <= ret) && (LowLevelThread.WAIT_ABANDONED + internalWaitHandles.Length > ret))
             {

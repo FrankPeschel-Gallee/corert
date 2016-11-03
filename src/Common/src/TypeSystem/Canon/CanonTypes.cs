@@ -57,9 +57,27 @@ namespace Internal.TypeSystem
     /// </summary>
     internal sealed partial class CanonType : CanonBaseType
     {
-        public const string FullName = "System.__Canon";
+        private const string _Namespace = "System";
+        private const string _Name = "__Canon";
+        public const string FullName = _Namespace + "." + _Name;
 
         private int _hashcode;
+
+        public override string Namespace
+        {
+            get
+            {
+                return _Namespace;
+            }
+        }
+
+        public override string Name
+        {
+            get
+            {
+                return _Name;
+            }
+        }
 
         public CanonType(TypeSystemContext context)
             : base(context)
@@ -100,6 +118,11 @@ namespace Internal.TypeSystem
                 flags |= TypeFlags.Class;
             }
 
+            if ((mask & TypeFlags.HasGenericVarianceComputed) != 0)
+            {
+                flags |= TypeFlags.HasGenericVarianceComputed;
+            }
+
             Debug.Assert((flags & mask) != 0);
             return flags;
         }
@@ -125,9 +148,27 @@ namespace Internal.TypeSystem
     /// </summary>
     internal sealed partial class UniversalCanonType : CanonBaseType
     {
-        public const string FullName = "System.__UniversalCanon";
+        private const string _Namespace = "System";
+        private const string _Name = "__UniversalCanon";
+        public const string FullName = _Namespace + "." + _Name;
 
         private int _hashcode;
+
+        public override string Namespace
+        {
+            get
+            {
+                return _Namespace;
+            }
+        }
+
+        public override string Name
+        {
+            get
+            {
+                return _Name;
+            }
+        }
 
         public UniversalCanonType(TypeSystemContext context)
             : base(context)
@@ -166,8 +207,9 @@ namespace Internal.TypeSystem
 
             if ((mask & TypeFlags.CategoryMask) != 0)
             {
-                // Behavior for this is undefined.
-                throw new NotSupportedException();
+                // Universally canonical type is reported as a variable-sized struct.
+                // It's the closest logical thing and avoids special casing around it.
+                flags |= TypeFlags.ValueType;
             }
 
             Debug.Assert((flags & mask) != 0);

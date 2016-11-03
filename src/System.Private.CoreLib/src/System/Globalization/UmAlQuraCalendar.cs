@@ -2,7 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 
 namespace System.Globalization
@@ -20,7 +20,8 @@ namespace System.Globalization
     **      UmAlQura    1318/01/01   1500/12/30
     */
 
-    public class UmAlQuraCalendar : Calendar
+    [Serializable]
+    public partial class UmAlQuraCalendar : Calendar
     {
         internal const int MinCalendarYear = 1318;
         internal const int MaxCalendarYear = 1500;
@@ -40,7 +41,7 @@ namespace System.Globalization
 
         private static DateMapping[] InitDateMapping()
         {
-            short[] s_rawData = new short[] 
+            short[] rawData = new short[] 
             {
                 //These data is taken from Tables/Excel/UmAlQura.xls please make sure that the two places are in sync
                 /*  DaysPerM     GY      GM     GD     D1   D2   D3   D4   D5   D6   D7   D8   D9   D10  D11  D12    
@@ -228,15 +229,15 @@ namespace System.Globalization
                 1499*/0x06AA,    2075,     12,    9,/* 0    1    0    1    0    1    0    1    0    1    1    0    12/9/2075
                 1500*/0x0E93,    2076,     11,   27,/* 1    1    0    0    1    0    0    1    0    1    1    1    11/27/2076
                 1501*/     0,    2077,     11,   17,/* 0    0    0    0    0    0    0    0    0    0    0    0    11/17/2077
-   */       };
+    */      };
             // Direct inline initialization of DateMapping array would produce a lot of code bloat.
 
             // We take advantage of C# compiler compiles inline initialization of primitive type array into very compact code.
             // So we start with raw data stored in primitive type array, and initialize the DateMapping out of it
 
-            DateMapping[] mapping = new DateMapping[s_rawData.Length / 4];
+            DateMapping[] mapping = new DateMapping[rawData.Length / 4];
             for (int i = 0; i < mapping.Length; i++)
-                mapping[i] = new DateMapping(s_rawData[i * 4], s_rawData[i * 4 + 1], s_rawData[i * 4 + 2], s_rawData[i * 4 + 3]);
+                mapping[i] = new DateMapping(rawData[i * 4], rawData[i * 4 + 1], rawData[i * 4 + 2], rawData[i * 4 + 3]);
             return mapping;
         }
 
@@ -248,30 +249,10 @@ namespace System.Globalization
         internal const int DatePartMonth = 2;
         internal const int DatePartDay = 3;
 
-        //internal static Calendar m_defaultInstance;
-
 
         // This is the minimal Gregorian date that we support in the UmAlQuraCalendar.
         internal static DateTime minDate = new DateTime(1900, 4, 30);
         internal static DateTime maxDate = new DateTime((new DateTime(2077, 11, 16, 23, 59, 59, 999)).Ticks + 9999);
-
-        /*=================================GetDefaultInstance==========================
-        **Action: Internal method to provide a default intance of UmAlQuraCalendar.  Used by NLS+ implementation
-        **       and other calendars.
-        **Returns:
-        **Arguments:
-        **Exceptions:
-        ============================================================================*/
-        /*
-        internal static Calendar GetDefaultInstance() {
-            if (m_defaultInstance == null) {
-                m_defaultInstance = new UmAlQuraCalendar();
-            }
-            return (m_defaultInstance);
-        }
-        */
-
-
 
         public override DateTime MinSupportedDateTime
         {
@@ -281,7 +262,6 @@ namespace System.Globalization
             }
         }
 
-
         public override DateTime MaxSupportedDateTime
         {
             get
@@ -289,9 +269,6 @@ namespace System.Globalization
                 return (maxDate);
             }
         }
-
-
-        // Construct an instance of UmAlQura calendar.
 
         public UmAlQuraCalendar()
         {
@@ -332,9 +309,9 @@ namespace System.Globalization
         =========================ConvertHijriToGregorian============================*/
         private static void ConvertHijriToGregorian(int HijriYear, int HijriMonth, int HijriDay, ref int yg, ref int mg, ref int dg)
         {
-            Contract.Assert((HijriYear >= MinCalendarYear) && (HijriYear <= MaxCalendarYear), "Hijri year is out of range.");
-            Contract.Assert(HijriMonth >= 1, "Hijri month is out of range.");
-            Contract.Assert(HijriDay >= 1, "Hijri day is out of range.");
+            Debug.Assert((HijriYear >= MinCalendarYear) && (HijriYear <= MaxCalendarYear), "Hijri year is out of range.");
+            Debug.Assert(HijriMonth >= 1, "Hijri month is out of range.");
+            Debug.Assert(HijriDay >= 1, "Hijri day is out of range.");
             int index, b, nDays = HijriDay - 1;
             DateTime dt;
 
@@ -373,7 +350,7 @@ namespace System.Globalization
             return GregorianCalendar.GetAbsoluteDate(yg, mg, dg);
         }
 
-        static internal void CheckTicksRange(long ticks)
+        internal static void CheckTicksRange(long ticks)
         {
             if (ticks < minDate.Ticks || ticks > maxDate.Ticks)
             {
@@ -387,7 +364,7 @@ namespace System.Globalization
             }
         }
 
-        static internal void CheckEraRange(int era)
+        internal static void CheckEraRange(int era)
         {
             if (era != CurrentEra && era != UmAlQuraEra)
             {
@@ -395,7 +372,7 @@ namespace System.Globalization
             }
         }
 
-        static internal void CheckYearRange(int year, int era)
+        internal static void CheckYearRange(int year, int era)
         {
             CheckEraRange(era);
             if (year < MinCalendarYear || year > MaxCalendarYear)
@@ -410,7 +387,7 @@ namespace System.Globalization
             }
         }
 
-        static internal void CheckYearMonthRange(int year, int month, int era)
+        internal static void CheckYearMonthRange(int year, int month, int era)
         {
             CheckYearRange(year, era);
             if (month < 1 || month > 12)
@@ -432,7 +409,7 @@ namespace System.Globalization
             TimeSpan ts;
             int yh1 = 0, mh1 = 0, dh1 = 0;
 
-            Contract.Assert((time.Ticks >= minDate.Ticks) && (time.Ticks <= maxDate.Ticks), "Gregorian date is out of range.");
+            Debug.Assert((time.Ticks >= minDate.Ticks) && (time.Ticks <= maxDate.Ticks), "Gregorian date is out of range.");
 
             // Find the index where we should start our search by quessing the Hijri year that we will be in HijriYearInfo.
             // A Hijri year is 354 or 355 days.  Use 355 days so that we will search from a lower index.
@@ -641,11 +618,11 @@ namespace System.Globalization
                 return 30;
         }
 
-        static internal int RealGetDaysInYear(int year)
+        internal static int RealGetDaysInYear(int year)
         {
             int days = 0, b;
 
-            Contract.Assert((year >= MinCalendarYear) && (year <= MaxCalendarYear), "Hijri year is out of range.");
+            Debug.Assert((year >= MinCalendarYear) && (year <= MaxCalendarYear), "Hijri year is out of range.");
 
             b = s_hijriYearInfo[year - MinCalendarYear].HijriMonthsLengthFlags;
 
@@ -654,7 +631,7 @@ namespace System.Globalization
                 days = days + 29 + (b & 1);   /* Add the months lengths before mh */
                 b = b >> 1;
             }
-            Contract.Assert((days == 354) || (days == 355), "Hijri year has to be 354 or 355 days.");
+            Debug.Assert((days == 354) || (days == 355), "Hijri year has to be 354 or 355 days.");
             return days;
         }
 

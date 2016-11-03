@@ -15,7 +15,7 @@ set(COMMON_RUNTIME_SOURCES
     gcrhenv.cpp
     gcrhscan.cpp
     GcStressControl.cpp
-    GenericInstance.cpp
+    GenericUnification.cpp
     HandleTableHelpers.cpp
     MathHelpers.cpp
     MiscHelpers.cpp
@@ -109,9 +109,9 @@ list(APPEND RUNTIME_SOURCES_ARCH_ASM
   ${ARCH_SOURCES_DIR}/AllocFast.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/ExceptionHandling.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/Interlocked.${ASM_SUFFIX}
-  ${ARCH_SOURCES_DIR}/ManagedCalloutThunk.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/PInvoke.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/StubDispatch.${ASM_SUFFIX}
+  ${ARCH_SOURCES_DIR}/UniversalTransition.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/WriteBarriers.${ASM_SUFFIX}
 )
 

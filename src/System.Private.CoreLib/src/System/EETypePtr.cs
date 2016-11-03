@@ -17,6 +17,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 
 using EEType = Internal.Runtime.EEType;
+using EETypeRef = Internal.Runtime.EETypeRef;
 
 namespace System
 {
@@ -188,7 +189,6 @@ namespace System
             }
         }
 
-#if CORERT
         internal GenericArgumentCollection Instantiation
         {
             get
@@ -204,7 +204,6 @@ namespace System
                 return new EETypePtr((IntPtr)_value->GenericDefinition);
             }
         }
-#endif
 
         /// <summary>
         /// Gets a value indicating whether this is a class, a struct, an enum, or an interface.
@@ -265,24 +264,13 @@ namespace System
             }
         }
 
-#if REAL_MULTIDIM_ARRAYS
         internal int ArrayRank
         {
             get
             {
-                Debug.Assert(this.IsArray);
-
-                int boundsSize = (int)this.BaseSize - Array.SZARRAY_BASE_SIZE;
-                if (boundsSize > 0)
-                {
-                    // Multidim array case: Base size includes space for two Int32s
-                    // (upper and lower bound) per each dimension of the array.
-                    return boundsSize / (2 * sizeof(int));
-                }
-                return 1;
+                return _value->ArrayRank;
             }
         }
-#endif
 
         internal InterfaceCollection Interfaces
         {
@@ -303,15 +291,6 @@ namespace System
                     return new EETypePtr(default(IntPtr));
 
                 EETypePtr baseEEType = new EETypePtr((IntPtr)_value->NonArrayBaseType);
-#if !REAL_MULTIDIM_ARRAYS
-                if (baseEEType == EETypePtr.EETypePtrOf<MDArrayRank2>() ||
-                    baseEEType == EETypePtr.EETypePtrOf<MDArrayRank3>() ||
-                    baseEEType == EETypePtr.EETypePtrOf<MDArrayRank4>())
-                {
-                    return EETypePtr.EETypePtrOf<Array>();
-                }
-#endif
-
                 return baseEEType;
             }
         }
@@ -368,9 +347,7 @@ namespace System
             }
         }
 
-#if CORERT
         [Intrinsic]
-#endif
         internal static EETypePtr EETypePtrOf<T>()
         {
             // Compilers are required to provide a low level implementation of this method.
@@ -409,13 +386,12 @@ namespace System
             }
         }
 
-#if CORERT
         public struct GenericArgumentCollection
         {
-            private EEType** _arguments;
+            private EETypeRef* _arguments;
             private uint _argumentCount;
 
-            internal GenericArgumentCollection(uint argumentCount, EEType** arguments)
+            internal GenericArgumentCollection(uint argumentCount, EETypeRef* arguments)
             {
                 _argumentCount = argumentCount;
                 _arguments = arguments;
@@ -434,10 +410,9 @@ namespace System
                 get
                 {
                     Debug.Assert((uint)index < _argumentCount);
-                    return new EETypePtr((IntPtr)_arguments[index]);
+                    return new EETypePtr((IntPtr)_arguments[index].Value);
                 }
             }
         }
-#endif
     }
 }

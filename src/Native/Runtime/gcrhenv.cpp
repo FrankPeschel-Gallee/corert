@@ -1021,11 +1021,6 @@ void GCToEEInterface::SyncBlockCachePromotionsGranted(int /*max_gen*/)
 {
 }
 
-void GCToEEInterface::SetGCSpecial(Thread * pThread)
-{
-    pThread->SetGCSpecial(true);
-}
-
 alloc_context * GCToEEInterface::GetAllocContext(Thread * pThread)
 {
     return pThread->GetAllocContext();
@@ -1065,9 +1060,10 @@ void GCToEEInterface::DisablePreemptiveGC(Thread * pThread)
 // Context passed to the above.
 struct GCBackgroundThreadContext
 {
-    GCBackgroundThreadFunction m_pRealStartRoutine;
-    void *                     m_pRealContext;
-    Thread **                  m_pThread;
+    GCBackgroundThreadFunction  m_pRealStartRoutine;
+    void *                      m_pRealContext;
+    Thread *                    m_pThread;
+    CLREventStatic              m_ThreadStartedEvent;
 };
 
 // Helper used to wrap the start routine of background GC threads so we can do things like initialize the
@@ -1082,37 +1078,48 @@ static uint32_t WINAPI BackgroundGCThreadStub(void * pContext)
     ASSERT(GCHeap::GetGCHeap()->IsGCInProgress());
     ThreadStore::AttachCurrentThread(false);
 
+    Thread * pThread = GetThread();
+    pThread->SetGCSpecial(true);
+
     // Inform the GC which Thread* we are.
-    *pStartContext->m_pThread = GetThread();
+    pStartContext->m_pThread = pThread;
 
     GCBackgroundThreadFunction realStartRoutine = pStartContext->m_pRealStartRoutine;
     void* realContext = pStartContext->m_pRealContext;
 
-    delete pStartContext;
+    pStartContext->m_ThreadStartedEvent.Set();
+
+    STRESS_LOG_RESERVE_MEM (GC_STRESSLOG_MULTIPLY);
 
     // Run the real start procedure and capture its return code on exit.
     return realStartRoutine(realContext);
 }
 
-bool GCToEEInterface::CreateBackgroundThread(Thread** thread, GCBackgroundThreadFunction threadStart, void* arg)
+Thread* GCToEEInterface::CreateBackgroundThread(GCBackgroundThreadFunction threadStart, void* arg)
 {
-    NewHolder<GCBackgroundThreadContext> context = new (nothrow) GCBackgroundThreadContext();
-    if (context == NULL)
+    GCBackgroundThreadContext threadStubArgs;
+
+    threadStubArgs.m_pThread = NULL;
+    threadStubArgs.m_pRealStartRoutine = threadStart;
+    threadStubArgs.m_pRealContext = arg;
+
+    if (!threadStubArgs.m_ThreadStartedEvent.CreateAutoEventNoThrow(false))
     {
-        return false;
+        return NULL;
     }
 
-    context->m_pThread = thread;
-    context->m_pRealStartRoutine = threadStart;
-    context->m_pRealContext = arg;
-
-    bool success = PalStartBackgroundGCThread(BackgroundGCThreadStub, context.GetValue());
-    if (success)
+    if (!PalStartBackgroundGCThread(BackgroundGCThreadStub, &threadStubArgs))
     {
-        context.SuppressRelease();
+        threadStubArgs.m_ThreadStartedEvent.CloseEvent();
+        return NULL;
     }
 
-    return success;
+    uint32_t res = threadStubArgs.m_ThreadStartedEvent.Wait(INFINITE, FALSE);
+    threadStubArgs.m_ThreadStartedEvent.CloseEvent();
+    ASSERT(res == WAIT_OBJECT_0);
+
+    ASSERT(threadStubArgs.m_pThread != NULL);
+    return threadStubArgs.m_pThread;
 }
 
 #endif // !DACCESS_COMPILE
@@ -1133,8 +1140,9 @@ bool IsGCSpecialThread()
 #ifdef FEATURE_PREMORTEM_FINALIZATION
 GPTR_IMPL(Thread, g_pFinalizerThread);
 GPTR_IMPL(Thread, g_pGcThread);
-CLREventStatic* hEventFinalizer = nullptr;
-CLREventStatic* hEventFinalizerDone = nullptr;
+
+CLREventStatic g_FinalizerEvent;
+CLREventStatic g_FinalizerDoneEvent;
 
 #ifndef DACCESS_COMPILE
 // Finalizer method implemented by redhawkm.
@@ -1217,16 +1225,14 @@ bool StartFinalizerThread()
 
 bool FinalizerThread::Initialize()
 {
-    // Allocate the events the GC expects the finalizer thread to have. The hEventFinalizer event is signalled
+    // Allocate the events the GC expects the finalizer thread to have. The g_FinalizerEvent event is signalled
     // by the GC whenever it completes a collection where it found otherwise unreachable finalizable objects.
-    // The hEventFinalizerDone event is set by the finalizer thread every time it wakes up and drains the
-    // queue of finalizable objects. It's mainly used by GC.WaitForPendingFinalizers(). The
-    // hEventFinalizerToShutDown and hEventShutDownToFinalizer are used to synchronize the main thread and the
-    // finalizer during the optional final finalization pass at shutdown.
-    hEventFinalizerDone = new (nothrow) CLREventStatic();
-    hEventFinalizerDone->CreateManualEvent(FALSE);
-    hEventFinalizer = new (nothrow) CLREventStatic();
-    hEventFinalizer->CreateAutoEvent(FALSE);
+    // The g_FinalizerDoneEvent is set by the finalizer thread every time it wakes up and drains the
+    // queue of finalizable objects. It's mainly used by GC.WaitForPendingFinalizers().
+    if (!g_FinalizerEvent.CreateAutoEventNoThrow(false))
+        return false;
+    if (!g_FinalizerDoneEvent.CreateManualEventNoThrow(false))
+        return false;
 
     // Create the finalizer thread itself.
     if (!StartFinalizerThread())
@@ -1243,12 +1249,12 @@ void FinalizerThread::SetFinalizerThread(Thread * pThread)
 void FinalizerThread::EnableFinalization()
 {
     // Signal to finalizer thread that there are objects to finalize
-    hEventFinalizer->Set();
+    g_FinalizerEvent.Set();
 }
 
 void FinalizerThread::SignalFinalizationDone(bool /*fFinalizer*/)
 {
-    hEventFinalizerDone->Set();
+    g_FinalizerDoneEvent.Set();
 }
 
 bool FinalizerThread::HaveExtraWorkForFinalizer()
@@ -1263,7 +1269,7 @@ bool FinalizerThread::IsCurrentThreadFinalizer()
 
 HANDLE FinalizerThread::GetFinalizerEvent()
 {
-    return hEventFinalizer->GetOSEvent();
+    return g_FinalizerEvent.GetOSEvent();
 }
 
 void FinalizerThread::Wait(DWORD timeout, bool allowReentrantWait)
@@ -1273,7 +1279,7 @@ void FinalizerThread::Wait(DWORD timeout, bool allowReentrantWait)
     {
         // Clear any current indication that a finalization pass is finished and wake the finalizer thread up
         // (if there's no work to do it'll set the done event immediately).
-        hEventFinalizerDone->Reset();
+        g_FinalizerDoneEvent.Reset();
         EnableFinalization();
 
 #ifdef APP_LOCAL_RUNTIME
@@ -1283,7 +1289,7 @@ void FinalizerThread::Wait(DWORD timeout, bool allowReentrantWait)
 #endif
 
         // Wait for the finalizer thread to get back to us.
-        hEventFinalizerDone->Wait(timeout, false, allowReentrantWait);
+        g_FinalizerDoneEvent.Wait(timeout, false, allowReentrantWait);
     }
 }
 #endif // !DACCESS_COMPILE
@@ -1306,11 +1312,6 @@ bool __SwitchToThread(uint32_t dwSleepMSec, uint32_t /*dwSwitchCount*/)
 MethodTable * g_pFreeObjectMethodTable;
 int32_t g_TrapReturningThreads;
 bool g_fFinalizerRunOnShutDown;
-
-void DestroyThread(Thread * /*pThread*/)
-{
-    // TODO: Implement
-}
 
 void StompWriteBarrierEphemeral(bool /* isRuntimeSuspended */)
 {
@@ -1361,4 +1362,40 @@ HRESULT CLRConfig::GetConfigValue(ConfigStringInfo /*eType*/, __out_z TCHAR * * 
 {
     *outVal = NULL;
     return 0;
+}
+
+bool NumaNodeInfo::CanEnableGCNumaAware() 
+{ 
+    // @TODO: enable NUMA node support
+    return false; 
+}
+
+void NumaNodeInfo::GetGroupForProcessor(uint16_t /*processor_number*/, uint16_t * /*group_number*/, uint16_t * /*group_processor_number*/)
+{
+    ASSERT_UNCONDITIONALLY("NYI: NumaNodeInfo::GetGroupForProcessor");
+}
+
+bool NumaNodeInfo::GetNumaProcessorNodeEx(PPROCESSOR_NUMBER /*proc_no*/, uint16_t * /*node_no*/)
+{
+    ASSERT_UNCONDITIONALLY("NYI: NumaNodeInfo::GetNumaProcessorNodeEx");
+    return false;
+}
+
+bool CPUGroupInfo::CanEnableGCCPUGroups()
+{
+    // @TODO: enable CPU group support
+    return false;
+}
+
+uint32_t CPUGroupInfo::GetNumActiveProcessors() 
+{ 
+    // @TODO: enable CPU group support
+    // NOTE: this API shouldn't be called unless CanEnableGCCPUGroups() returns true
+    ASSERT_UNCONDITIONALLY("NYI: CPUGroupInfo::GetNumActiveProcessors");
+    return 0;
+}
+
+void CPUGroupInfo::GetGroupForProcessor(uint16_t /*processor_number*/, uint16_t * /*group_number*/, uint16_t * /*group_processor_number*/)
+{
+    ASSERT_UNCONDITIONALLY("NYI: CPUGroupInfo::GetGroupForProcessor");
 }

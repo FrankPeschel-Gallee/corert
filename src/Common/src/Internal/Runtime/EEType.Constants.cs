@@ -79,7 +79,7 @@ namespace Internal.Runtime
         /// </summary>
         ComplexCastingMask = EETypeKindMask | RelatedTypeViaIATFlag | GenericVarianceFlag
     };
-    
+
     internal enum EETypeKind : ushort
     {
         /// <summary>
@@ -157,8 +157,30 @@ namespace Internal.Runtime
         /// This EEType represents a structure that is an HFA
         /// </summary>
         IsHFAFlag = 0x00000100,
+
+        /// <summary>
+        /// This EEType has sealed vtable entries
+        /// This is for statically generated types - we need two different flags because
+        /// the sealed vtable entries are reached in different ways in the static and dynamic case
+        /// </summary>
+        HasSealedVTableEntriesFlag = 0x00000200,
+
+        /// <summary>
+        /// This dynamically created types has gc statics
+        /// </summary>
+        IsDynamicTypeWithGcStatics = 0x00000400,
+
+        /// <summary>
+        /// This dynamically created types has non gc statics
+        /// </summary>
+        IsDynamicTypeWithNonGcStatics = 0x00000800,
+
+        /// <summary>
+        /// This dynamically created types has thread statics
+        /// </summary>
+        IsDynamicTypeWithThreadStatics = 0x00001000,
     }
-    
+
     internal enum EETypeOptionalFieldsElement : byte
     {
         /// <summary>
@@ -195,7 +217,7 @@ namespace Internal.Runtime
         Count
     }
 
-    enum EETypeField
+    internal enum EETypeField
     {
         ETF_InterfaceMap,
         ETF_Finalizer,
@@ -204,13 +226,11 @@ namespace Internal.Runtime
         ETF_SealedVirtualSlots,
         ETF_DynamicTemplateType,
         ETF_DynamicDispatchMap,
-#if CORERT
         ETF_GenericDefinition,
         ETF_GenericComposition,
-#endif
     }
 
-    enum CorElementType
+    internal enum CorElementType
     {
         ELEMENT_TYPE_END = 0x00,
 
@@ -243,7 +263,7 @@ namespace Internal.Runtime
         ELEMENT_TYPE_SZARRAY = 0x1d,
     }
 
-    enum EETypeOptionalFieldTag : byte
+    internal enum EETypeOptionalFieldTag : byte
     {
         OFT_RareFlags,
         OFT_ICastableIsInstSlot,
@@ -256,7 +276,7 @@ namespace Internal.Runtime
     }
 
     // Keep this synchronized with GenericVarianceType in rhbinder.h.
-    enum GenericVariance : byte
+    internal enum GenericVariance : byte
     {
         NonVariant = 0,
         Covariant = 1,

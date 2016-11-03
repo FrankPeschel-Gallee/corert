@@ -62,19 +62,19 @@ public void System.Array.CopyTo(System.Array array, int index)
 public static System.Runtime.InteropServices.GCHandle System.Runtime.InteropServices.GCHandle.Alloc(object value, System.Runtime.InteropServices.GCHandleType type)
 
 # ByReference<T>
-private static extern System.Runtime.CompilerServices.ByReference<T> System.Runtime.CompilerServices.ByReference<T>.AddRaw(System.Runtime.CompilerServices.ByReference<T> pointer, int rawOffset)
+internal static extern System.Runtime.CompilerServices.ByReference<T> System.Runtime.CompilerServices.ByReference<T>.AddRaw(System.Runtime.CompilerServices.ByReference<T> pointer, int rawOffset)
 public static extern System.Runtime.CompilerServices.ByReference<T1> System.Runtime.CompilerServices.ByReference<T>.Cast<T1>(System.Runtime.CompilerServices.ByReference<T> pointer)
 public static extern System.Runtime.CompilerServices.ByReference<T> System.Runtime.CompilerServices.ByReference<T>.FromRef(ref T pointer)
 public static extern T System.Runtime.CompilerServices.ByReference<T>.Load(System.Runtime.CompilerServices.ByReference<T> pointer)
 private static extern bool System.Runtime.CompilerServices.ByReference<T>.PointerEquals(System.Runtime.CompilerServices.ByReference<T> value1, System.Runtime.CompilerServices.ByReference<T> value2)
 private static extern int System.Runtime.CompilerServices.ByReference<T>.SizeOfTUnsigned()
-private static extern void System.Runtime.CompilerServices.ByReference<T>.Store(System.Runtime.CompilerServices.ByReference<T> pointer, T value)
+internal static extern void System.Runtime.CompilerServices.ByReference<T>.Store(System.Runtime.CompilerServices.ByReference<T> pointer, T value)
 private static extern System.Runtime.CompilerServices.ByReference<T> System.Runtime.CompilerServices.ByReference<T>.SubRaw(System.Runtime.CompilerServices.ByReference<T> pointer, int rawOffset)
 public static extern System.UIntPtr System.Runtime.CompilerServices.ByReference<T>.ToPointer(System.Runtime.CompilerServices.ByReference<T> pointer)
 private static extern int System.Runtime.CompilerServices.ByReference<T>.UncheckedMul(int a, int b)
 public static System.Runtime.CompilerServices.ByReference<T> System.Runtime.CompilerServices.ByReference<T>.Add(System.Runtime.CompilerServices.ByReference<T> pointer, int offset)
 public static T System.Runtime.CompilerServices.ByReference<T>.LoadAtIndex(System.Runtime.CompilerServices.ByReference<T> pointer, int index)
-private static int System.Runtime.CompilerServices.ByReference<T>.SizeOfT()
+internal static int System.Runtime.CompilerServices.ByReference<T>.SizeOfT()
 internal static void System.Runtime.CompilerServices.ByReference<T>.StoreAtIndex(System.Runtime.CompilerServices.ByReference<T> pointer, int index, T value)
 
 # System.SR
@@ -82,7 +82,6 @@ internal static string System.SR.GetResourceString(string resourceKey)
 internal static string System.SR.GetResourceString(string resourceKey, string defaultString)
 
 # System.Runtime.RuntimeImports
-internal static extern double System.Runtime.RuntimeImports._copysign(double x, double y)
 internal static extern void System.Runtime.RuntimeImports._ecvt_s(byte* buffer, int sizeInBytes, double value, int count, int* dec, int* sign)
 internal static extern double System.Runtime.RuntimeImports.acos(double x)
 internal static extern bool System.Runtime.RuntimeImports.AreTypesAssignable(System.EETypePtr pSourceType, System.EETypePtr pTargetType)
@@ -101,7 +100,6 @@ internal static extern object System.Runtime.RuntimeImports.IsInstanceOfClass(ob
 internal static extern object System.Runtime.RuntimeImports.IsInstanceOfInterface(object obj, System.EETypePtr pTargetType)
 internal static extern double System.Runtime.RuntimeImports.log(double x)
 internal static extern double System.Runtime.RuntimeImports.log10(double x)
-#REMOVED --> internal static unsafe extern void System.Runtime.RuntimeImports.memmove(byte* dmem, byte* smem, int size)
 internal static extern double System.Runtime.RuntimeImports.modf(double x, double* intptr)
 internal static extern double System.Runtime.RuntimeImports.pow(double x, double y)
 internal static extern System.IntPtr System.Runtime.RuntimeImports.RhAllocateThunksFromTemplate(System.IntPtr moduleHandle, int templateRva, int templateSize)
@@ -168,7 +166,6 @@ internal static extern System.IntPtr System.Runtime.RuntimeImports.RhResolveDisp
 internal static extern System.IntPtr System.Runtime.RuntimeImports.RhResolveDispatchOnType(System.EETypePtr instanceType, System.EETypePtr interfaceType, ushort slot)
 internal static extern void* System.Runtime.RuntimeImports.RhSetErrorInfoBuffer(void* pNewBuffer)
 internal static extern void System.Runtime.RuntimeImports.RhSetGcLatencyMode(System.Runtime.GCLatencyMode newLatencyMode)
-internal static extern bool System.Runtime.RuntimeImports.RhSetGenericInstantiation(System.EETypePtr pEEType, System.EETypePtr pEETypeDef, int arity, System.EETypePtr* pInstantiation)
 internal static extern void System.Runtime.RuntimeImports.RhSetLohCompactionMode(int newLohCompactionMode)
 internal static extern void System.Runtime.RuntimeImports.RhSpinWait(int iterations)
 internal static extern void System.Runtime.RuntimeImports.RhSuppressFinalize(object obj)
@@ -176,7 +173,7 @@ internal static extern void System.Runtime.RuntimeImports.RhUnbox(object obj, vo
 internal static extern void System.Runtime.RuntimeImports.RhUnregisterGcCallout(System.Runtime.RuntimeImports.GcRestrictedCalloutKind eKind, System.IntPtr pCalloutMethod)
 internal static extern void System.Runtime.RuntimeImports.RhUnregisterRefCountedHandleCallback(System.IntPtr pCalloutMethod, System.EETypePtr pTypeFilter)
 private static extern void System.Runtime.RuntimeImports.RhWaitForPendingFinalizers(int allowReentrantWait)
-internal static extern bool System.Runtime.RuntimeImports.RhYield()
+internal static bool System.Runtime.RuntimeImports.RhYield()
 internal static extern double System.Runtime.RuntimeImports.sin(double x)
 internal static extern double System.Runtime.RuntimeImports.sinh(double x)
 internal static extern double System.Runtime.RuntimeImports.sqrt(double x)
@@ -188,15 +185,26 @@ internal static System.Runtime.RuntimeImports.RhCorElementTypeInfo System.Runtim
 internal static int System.Runtime.RuntimeImports.RhCompatibleReentrantWaitAny(bool alertable, int timeout, int count, System.IntPtr* handles)
 internal static void System.Runtime.RuntimeImports.RhWaitForPendingFinalizers(bool allowReentrantWait)
 public static extern void System.Runtime.CompilerServices.RuntimeHelpers.InitializeArray(System.Array array, System.RuntimeFieldHandle fldHandle)
-internal static extern T System.Runtime.CompilerServices.RuntimeHelpers.UncheckedCast<T>(object value)
+
+# System.Runtime.CompilerSerivces
+public static System.Runtime.CompilerServices.AsyncTaskMethodBuilder System.Runtime.CompilerServices.AsyncTaskMethodBuilder.Create()
+public void System.Runtime.CompilerServices.AsyncTaskMethodBuilder.SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine stateMachine)
+public void System.Runtime.CompilerServices.AsyncTaskMethodBuilder.AwaitOnCompleted<TAwaiter, TStateMachine>(ref TAwaiter awaiter, ref TStateMachine stateMachine)
+public void System.Runtime.CompilerServices.AsyncTaskMethodBuilder.AwaitUnsafeOnCompleted<TAwaiter, TStateMachine>(ref TAwaiter awaiter, ref TStateMachine stateMachine)
+private void System.Runtime.CompilerServices.AsyncTaskMethodBuilder.EnsureTaskCreated()
+public void System.Runtime.CompilerServices.AsyncTaskMethodBuilder.Start<TStateMachine>(ref TStateMachine stateMachine)
+public void System.Runtime.CompilerServices.AsyncTaskMethodBuilder.SetResult()
+public void System.Runtime.CompilerServices.AsyncTaskMethodBuilder.SetException(System.Exception exception)
+internal static void System.Runtime.CompilerServices.AsyncTaskMethodBuilder.SetException(System.Threading.Tasks.Task task, System.Exception exception)
+internal void System.Runtime.CompilerServices.AsyncTaskMethodBuilder.SetNotificationForWaitCompletion(bool enabled)
+private object System.Runtime.CompilerServices.AsyncTaskMethodBuilder.ObjectIdForDebugger.get
+public System.Threading.Tasks.Task System.Runtime.CompilerServices.AsyncTaskMethodBuilder.Task.get
 
 # System.Runtime.CompilerServices.RuntimeHelpers
 public static void System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack()
 public static int System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(object o)
-private static int System.Runtime.CompilerServices.RuntimeHelpers.GetNewHashCode()
 public static object System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue(object obj)
 private static byte* System.Runtime.CompilerServices.RuntimeHelpers.GetSufficientStackLimit()
-private static int System.Runtime.CompilerServices.RuntimeHelpers.MakeHashCode(object o, int* pSyncBlockIndex)
 public static int System.Runtime.CompilerServices.RuntimeHelpers.OffsetToStringData.get
 public static void System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(System.RuntimeTypeHandle type)
 
@@ -235,6 +243,12 @@ private static volatile System.Collections.Generic.ArraySortHelper<TKey, TValue>
 private static volatile System.Globalization.CultureInfo System.Globalization.CultureInfo.s_DefaultThreadCurrentCulture
 private static volatile System.Globalization.CultureInfo System.Globalization.CultureInfo.s_DefaultThreadCurrentUICulture
 private static volatile System.Globalization.CultureInfo System.Globalization.CultureInfo.s_InvariantCultureInfo
+private System.Threading.Tasks.Task System.Runtime.CompilerServices.AsyncVoidMethodBuilder.m_task
+private System.Threading.Tasks.Task<System.Threading.Tasks.VoidTaskResult> System.Runtime.CompilerServices.AsyncTaskMethodBuilder.m_task
+private System.Threading.Tasks.Task<TResult> System.Runtime.CompilerServices.AsyncTaskMethodBuilder<TResult>.m_task
+private volatile int System.Threading.Tasks.Task.m_taskId
+internal volatile int System.Threading.Tasks.Task.m_stateFlags
+
 
 # SOS
 internal string System.Exception._message

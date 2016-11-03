@@ -240,14 +240,16 @@ namespace Internal.JitInterface
         CORINFO_LOOKUP_CLASSPARAM,
     }
 
-    public struct CORINFO_LOOKUP_KIND
+    public unsafe struct CORINFO_LOOKUP_KIND
     {
         private byte _needsRuntimeLookup;
         public bool needsRuntimeLookup { get { return _needsRuntimeLookup != 0; } set { _needsRuntimeLookup = value ? (byte)1 : (byte)0; } }
         public CORINFO_RUNTIME_LOOKUP_KIND runtimeLookupKind;
-        // The 'runtimeLookupFlags' field is just for internal VM / ZAP communication, 
-        // not to be used by the JIT.
+
+        // The 'runtimeLookupFlags' and 'runtimeLookupArgs' fields
+        // are just for internal VM / ZAP communication, not to be used by the JIT.
         public ushort runtimeLookupFlags;
+        public void* runtimeLookupArgs;
     }
 
     // CORINFO_RUNTIME_LOOKUP indicates the details of the runtime lookup
@@ -291,7 +293,7 @@ namespace Internal.JitInterface
         public CORINFO_LOOKUP_KIND lookupKind;
 
         // If kind.needsRuntimeLookup then this indicates how to do the lookup
-        [FieldOffset(16)]
+        [FieldOffset(24)]
         public CORINFO_RUNTIME_LOOKUP runtimeLookup;
 
         // If the handle is obtained at compile-time, then this handle is the "exact" handle (class, method, or field)
@@ -299,7 +301,7 @@ namespace Internal.JitInterface
         //     IAT_VALUE --> "handle" stores the real handle or "addr " stores the computed address
         //     IAT_PVALUE --> "addr" stores a pointer to a location which will hold the real handle
         //     IAT_PPVALUE --> "addr" stores a double indirection to a location which will hold the real handle
-        [FieldOffset(16)]
+        [FieldOffset(24)]
         public CORINFO_CONST_LOOKUP constLookup;
     }
 
@@ -881,6 +883,9 @@ namespace Internal.JitInterface
         public uint offsetOfDelegateInstance;
         public uint offsetOfDelegateFirstTarget;
 
+        // Secure delegate offsets
+        public uint offsetOfSecureDelegateIndirectCell;
+
         // Remoting offsets
         public uint offsetOfTransparentProxyRP;
         public uint offsetOfRealProxyServer;
@@ -1035,11 +1040,13 @@ namespace Internal.JitInterface
         public CORINFO_THIS_TRANSFORM thisTransform;
 
         public CORINFO_CALL_KIND kind;
+
         public uint _nullInstanceCheck;
         public bool nullInstanceCheck { get { return _nullInstanceCheck != 0; } set { _nullInstanceCheck = value ? (byte)1 : (byte)0; } }
 
         // Context for inlining and hidden arg
         public CORINFO_CONTEXT_STRUCT* contextHandle;
+
         public uint _exactContextNeedsRuntimeLookup; // Set if contextHandle is approx handle. Runtime lookup is required to get the exact handle.
         public bool exactContextNeedsRuntimeLookup { get { return _exactContextNeedsRuntimeLookup != 0; } set { _exactContextNeedsRuntimeLookup = value ? (byte)1 : (byte)0; } }
 
@@ -1049,6 +1056,9 @@ namespace Internal.JitInterface
 
         // Used by Ready-to-Run
         public CORINFO_CONST_LOOKUP instParamLookup;
+
+        public uint _secureDelegateInvoke;
+        public bool secureDelegateInvoke { get { return _secureDelegateInvoke != 0; } set { _secureDelegateInvoke = value ? (byte)1 : (byte)0; } }
     }
 
 

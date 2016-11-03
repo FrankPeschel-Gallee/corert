@@ -8,15 +8,9 @@ using System.Runtime.InteropServices;
 
 internal static partial class Interop
 {
-    internal struct FILETIME
-    {
-        internal uint dwLowDateTime;
-        internal uint dwHighDateTime;
-    }
-    
-    internal static unsafe partial class mincore
+    internal static partial class mincore
     {
         [DllImport("api-ms-win-core-sysinfo-l1-1-0.dll")]
-        internal extern static void GetSystemTimeAsFileTime(out FILETIME lpSystemTimeAsFileTime);
+        internal extern static unsafe void GetSystemTimeAsFileTime(long* lpSystemTimeAsFileTime);
     }
 }

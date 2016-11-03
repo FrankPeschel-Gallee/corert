@@ -2,20 +2,21 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Reflection;
-using global::System.Diagnostics;
-using global::System.Collections.Generic;
-using global::System.Runtime.CompilerServices;
-using global::System.Reflection.Runtime.TypeInfos;
-using global::System.Reflection.Runtime.ParameterInfos;
+using System;
+using System.Reflection;
+using System.Diagnostics;
+using System.Globalization;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.TypeInfos;
+using System.Reflection.Runtime.ParameterInfos;
+using System.Reflection.Runtime.BindingFlagSupport;
 
-using global::Internal.Reflection.Core.Execution;
-using global::Internal.Reflection.Core.NonPortable;
-using global::Internal.Reflection.Extensibility;
-using global::Internal.Reflection.Tracing;
+using Internal.Reflection.Core.Execution;
+using Internal.Reflection.Tracing;
 
-using global::Internal.Metadata.NativeFormat;
+using Internal.Metadata.NativeFormat;
 
 namespace System.Reflection.Runtime.MethodInfos
 {
@@ -23,7 +24,7 @@ namespace System.Reflection.Runtime.MethodInfos
     // Abstract base class for RuntimeNamedMethodInfo, RuntimeConstructedGenericMethodInfo.
     //
     [DebuggerDisplay("{_debugName}")]
-    internal abstract class RuntimeMethodInfo : ExtensibleMethodInfo, ITraceableTypeMember
+    internal abstract partial class RuntimeMethodInfo : MethodInfo, ITraceableTypeMember
     {
         protected RuntimeMethodInfo()
         {
@@ -102,20 +103,27 @@ namespace System.Reflection.Runtime.MethodInfos
 
         public abstract override bool Equals(object obj);
 
+        public abstract override int GetHashCode();
+
+        public sealed override MethodInfo GetBaseDefinition()
+        {
+            MethodInfo method = this;
+            while (true)
+            {
+                MethodInfo next = method.GetImplicitlyOverriddenBaseClassMember();
+                if (next == null)
+                    return method;
+
+                method = next;
+            }
+        }
+
         public sealed override Type[] GetGenericArguments()
         {
-            RuntimeType[] genericArgumentsOrParameters = this.RuntimeGenericArgumentsOrParameters;
-            if (genericArgumentsOrParameters.Length == 0)
-                return Array.Empty<Type>();
-            Type[] result = new Type[genericArgumentsOrParameters.Length];
-            for (int i = 0; i < genericArgumentsOrParameters.Length; i++)
-                result[i] = genericArgumentsOrParameters[i];
-            return result;
+            return RuntimeGenericArgumentsOrParameters.CloneTypeArray();
         }
 
         public abstract override MethodInfo GetGenericMethodDefinition();
-
-        public abstract override int GetHashCode();
 
         public sealed override ParameterInfo[] GetParameters()
         {
@@ -124,22 +132,29 @@ namespace System.Reflection.Runtime.MethodInfos
                 ReflectionTrace.MethodBase_GetParameters(this);
 #endif
 
-            RuntimeParameterInfo[] runtimeParameterInfos = this.GetRuntimeParametersAndReturn(this);
-            if (runtimeParameterInfos.Length == 1)
+            RuntimeParameterInfo[] runtimeParameterInfos = RuntimeParameters;
+            if (runtimeParameterInfos.Length == 0)
                 return Array.Empty<ParameterInfo>();
-            ParameterInfo[] result = new ParameterInfo[runtimeParameterInfos.Length - 1];
+            ParameterInfo[] result = new ParameterInfo[runtimeParameterInfos.Length];
             for (int i = 0; i < result.Length; i++)
-                result[i] = runtimeParameterInfos[i + 1];
+                result[i] = runtimeParameterInfos[i];
             return result;
         }
 
+        public sealed override ParameterInfo[] GetParametersNoCopy()
+        {
+            return RuntimeParameters;
+        }
+
         [DebuggerGuidedStepThroughAttribute]
-        public sealed override Object Invoke(Object obj, Object[] parameters)
+        public sealed override object Invoke(object obj, BindingFlags invokeAttr, Binder binder, object[] parameters, CultureInfo culture)
         {
 #if ENABLE_REFLECTION_TRACE
             if (ReflectionTrace.Enabled)
                 ReflectionTrace.MethodBase_Invoke(this, obj, parameters);
 #endif
+            if (invokeAttr != BindingFlags.Default || binder != null || culture != null)
+                throw new NotImplementedException();
 
             if (parameters == null)
                 parameters = Array.Empty<Object>();
@@ -160,6 +175,14 @@ namespace System.Reflection.Runtime.MethodInfos
         }
 
         public abstract override MethodInfo MakeGenericMethod(params Type[] typeArguments);
+
+        public sealed override int MetadataToken
+        {
+            get
+            {
+                throw new InvalidOperationException(SR.NoMetadataTokenAvailable);
+            }
+        }
 
         public abstract override MethodImplAttributes MethodImplementationFlags
         {
@@ -192,7 +215,7 @@ namespace System.Reflection.Runtime.MethodInfos
                     ReflectionTrace.MethodInfo_ReturnParameter(this);
 #endif
 
-                return this.GetRuntimeParametersAndReturn(this)[0];
+                return this.RuntimeReturnParameter;
             }
         }
 
@@ -227,7 +250,7 @@ namespace System.Reflection.Runtime.MethodInfos
             }
         }
 
-        internal abstract RuntimeType RuntimeDeclaringType
+        internal abstract RuntimeTypeInfo RuntimeDeclaringType
         {
             get;
         }
@@ -242,13 +265,45 @@ namespace System.Reflection.Runtime.MethodInfos
         //
         // The non-public version of MethodInfo.GetGenericArguments() (does not array-copy and has a more truthful name.)
         //
-        internal abstract RuntimeType[] RuntimeGenericArgumentsOrParameters { get; }
+        internal abstract RuntimeTypeInfo[] RuntimeGenericArgumentsOrParameters { get; }
+
+        internal abstract RuntimeParameterInfo[] GetRuntimeParameters(RuntimeMethodInfo contextMethod, out RuntimeParameterInfo returnParameter);
 
         //
         // The non-public version of MethodInfo.GetParameters() (does not array-copy.) 
-        // The first element is actually the ReturnParameter value.
         //
-        internal abstract RuntimeParameterInfo[] GetRuntimeParametersAndReturn(RuntimeMethodInfo contextMethod);
+        internal RuntimeParameterInfo[] RuntimeParameters
+        {
+            get
+            {
+                RuntimeParameterInfo[] parameters = _lazyParameters;
+                if (parameters == null)
+                {
+                    RuntimeParameterInfo returnParameter;
+                    parameters = _lazyParameters = GetRuntimeParameters(this, out returnParameter);
+                    _lazyReturnParameter = returnParameter;  // Opportunistically initialize the _lazyReturnParameter latch as well.
+                }
+                return parameters;
+            }
+        }
+
+        internal RuntimeParameterInfo RuntimeReturnParameter
+        {
+            get
+            {
+                RuntimeParameterInfo returnParameter = _lazyReturnParameter;
+                if (returnParameter == null)
+                {
+                    // Though the returnParameter is our primary objective, we can opportunistically initialize the _lazyParameters latch too.
+                    _lazyParameters = GetRuntimeParameters(this, out returnParameter);
+                    _lazyReturnParameter = returnParameter;
+                }
+                return returnParameter;
+            }
+        }
+
+        private volatile RuntimeParameterInfo[] _lazyParameters;
+        private volatile RuntimeParameterInfo _lazyReturnParameter;
 
         internal MethodInvoker MethodInvoker
         {
@@ -274,7 +329,7 @@ namespace System.Reflection.Runtime.MethodInfos
         private Delegate CreateDelegate(Type delegateType, Object target, bool allowClosedInstanceDelegates)
         {
             if (delegateType == null)
-                throw new ArgumentNullException("delegateType");
+                throw new ArgumentNullException(nameof(delegateType));
 
             ExecutionEnvironment executionEnvironment = ReflectionCoreExecution.ExecutionEnvironment;
             RuntimeTypeHandle delegateTypeHandle = delegateType.TypeHandle;
@@ -298,8 +353,8 @@ namespace System.Reflection.Runtime.MethodInfos
             // Make sure the return type is assignment-compatible.
             CheckIsAssignableFrom(executionEnvironment, invokeMethod.ReturnParameter.ParameterType, this.ReturnParameter.ParameterType);
 
-            IList<ParameterInfo> delegateParameters = invokeMethod.GetParameters();
-            IList<ParameterInfo> targetParameters = this.GetParameters();
+            IList<ParameterInfo> delegateParameters = invokeMethod.GetParametersNoCopy();
+            IList<ParameterInfo> targetParameters = this.GetParametersNoCopy();
             IEnumerator<ParameterInfo> delegateParameterEnumerator = delegateParameters.GetEnumerator();
             IEnumerator<ParameterInfo> targetParameterEnumerator = targetParameters.GetEnumerator();
 

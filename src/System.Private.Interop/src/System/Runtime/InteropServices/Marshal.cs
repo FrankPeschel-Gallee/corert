@@ -11,12 +11,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Threading;
-using System.Reflection;
 
 #if ENABLE_WINRT
 using System.Runtime.InteropServices.ComTypes;
@@ -628,7 +629,7 @@ namespace System.Runtime.InteropServices
         //====================================================================
         public static void ThrowExceptionForHR(int errorCode)
         {
-            ThrowExceptionForHRInternal(errorCode, IntPtr.Zero);
+            ThrowExceptionForHRInternal(errorCode, new IntPtr(-1));
         }
 
         public static void ThrowExceptionForHR(int errorCode, IntPtr errorInfo)
@@ -672,9 +673,9 @@ namespace System.Runtime.InteropServices
 
         private unsafe static void ConvertToAnsi(string source, IntPtr pbNativeBuffer, int cbNativeBuffer)
         {
-            Contract.Assert(source != null);
-            Contract.Assert(pbNativeBuffer != IntPtr.Zero);
-            Contract.Assert(cbNativeBuffer >= (source.Length + 1) * SystemMaxDBCSCharSize, "Insufficient buffer length passed to ConvertToAnsi");
+            Debug.Assert(source != null);
+            Debug.Assert(pbNativeBuffer != IntPtr.Zero);
+            Debug.Assert(cbNativeBuffer >= (source.Length + 1) * SystemMaxDBCSCharSize, "Insufficient buffer length passed to ConvertToAnsi");
 
             fixed (char* pch = source)
             {
@@ -722,7 +723,7 @@ namespace System.Runtime.InteropServices
 
         private static unsafe int lstrlenA(IntPtr sz)
         {
-            Contract.Requires(sz != IntPtr.Zero);
+            Debug.Assert(sz != IntPtr.Zero);
 
             byte* pb = (byte*)sz;
             byte* start = pb;
@@ -736,7 +737,7 @@ namespace System.Runtime.InteropServices
 
         private static unsafe int lstrlenW(IntPtr wsz)
         {
-            Contract.Requires(wsz != IntPtr.Zero);
+            Debug.Assert(wsz != IntPtr.Zero);
 
             char* pc = (char*)wsz;
             char* start = pc;
@@ -752,8 +753,8 @@ namespace System.Runtime.InteropServices
         // replace the zeroing with a nop
         private static unsafe void SecureZeroMemory(IntPtr ptr, int bytes)
         {
-            Contract.Assert(ptr != IntPtr.Zero);
-            Contract.Assert(bytes >= 0);
+            Debug.Assert(ptr != IntPtr.Zero);
+            Debug.Assert(bytes >= 0);
 
             byte* pBuffer = (byte*)ptr;
             for (int i = 0; i < bytes; ++i)

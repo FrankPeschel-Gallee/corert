@@ -2,27 +2,26 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Reflection;
-using global::System.Diagnostics;
-using global::System.Collections.Generic;
-using global::System.Reflection.Runtime.TypeInfos;
-using global::System.Reflection.Runtime.ParameterInfos;
+using System;
+using System.Reflection;
+using System.Diagnostics;
+using System.Globalization;
+using System.Collections.Generic;
+using System.Reflection.Runtime.TypeInfos;
+using System.Reflection.Runtime.ParameterInfos;
 
-using global::Internal.Reflection.Core.Execution;
-using global::Internal.Reflection.Core.NonPortable;
-using global::Internal.Reflection.Extensibility;
+using Internal.Reflection.Core.Execution;
 
-using global::Internal.Metadata.NativeFormat;
+using Internal.Metadata.NativeFormat;
 
-using global::Internal.Reflection.Tracing;
+using Internal.Reflection.Tracing;
 
 namespace System.Reflection.Runtime.MethodInfos
 {
     //
     // The runtime's implementation of ConstructorInfo.
     //
-    internal abstract partial class RuntimeConstructorInfo : ExtensibleConstructorInfo
+    internal abstract partial class RuntimeConstructorInfo : ConstructorInfo
     {
         public abstract override MethodAttributes Attributes { get; }
 
@@ -53,23 +52,31 @@ namespace System.Reflection.Runtime.MethodInfos
                 ReflectionTrace.MethodBase_GetParameters(this);
 #endif
 
-            RuntimeParameterInfo[] runtimeParametersAndReturn = this.RuntimeParametersAndReturn;
-            if (runtimeParametersAndReturn.Length == 1)
+            RuntimeParameterInfo[] parameters = RuntimeParameters;
+            if (parameters.Length == 0)
                 return Array.Empty<ParameterInfo>();
-            ParameterInfo[] result = new ParameterInfo[runtimeParametersAndReturn.Length - 1];
+            ParameterInfo[] result = new ParameterInfo[parameters.Length];
             for (int i = 0; i < result.Length; i++)
-                result[i] = runtimeParametersAndReturn[i + 1];
+                result[i] = parameters[i];
             return result;
         }
 
-        public abstract override Object Invoke(Object[] parameters);
+        public sealed override ParameterInfo[] GetParametersNoCopy()
+        {
+            return RuntimeParameters;
+        }
 
-        public sealed override Object Invoke(Object obj, Object[] parameters)
+        public abstract override object Invoke(BindingFlags invokeAttr, Binder binder, object[] parameters, CultureInfo culture);
+
+        public sealed override object Invoke(object obj, BindingFlags invokeAttr, Binder binder, object[] parameters, CultureInfo culture)
         {
 #if ENABLE_REFLECTION_TRACE
             if (ReflectionTrace.Enabled)
                 ReflectionTrace.MethodBase_Invoke(this, obj, parameters);
 #endif
+
+            if (invokeAttr != BindingFlags.Default || binder != null || culture != null)
+                throw new NotImplementedException();
 
             if (parameters == null)
                 parameters = Array.Empty<Object>();
@@ -99,6 +106,14 @@ namespace System.Reflection.Runtime.MethodInfos
             }
 
             return methodInvoker.Invoke(obj, parameters);
+        }
+
+        public sealed override int MetadataToken
+        {
+            get
+            {
+                throw new InvalidOperationException(SR.NoMetadataTokenAvailable);
+            }
         }
 
         public sealed override Module Module
@@ -147,7 +162,7 @@ namespace System.Reflection.Runtime.MethodInfos
             }
         }
 
-        protected abstract RuntimeParameterInfo[] RuntimeParametersAndReturn { get; }
+        protected abstract RuntimeParameterInfo[] RuntimeParameters { get; }
 
         protected abstract MethodInvoker UncachedMethodInvoker { get; }
 

@@ -65,6 +65,7 @@ namespace System.Diagnostics
         }
 
         [DebuggerHidden]
+        [Intrinsic]
         internal static void DebugBreak()
         {
             // IMPORTANT: This call will let us detect if  debug break is broken, and also

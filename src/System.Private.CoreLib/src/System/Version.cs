@@ -3,8 +3,8 @@
 // See the LICENSE file in the project root for more information.
 
 using System.Globalization;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
-using NumberStyles = System.Globalization.NumberStyles;
 
 namespace System
 {
@@ -15,7 +15,7 @@ namespace System
     // specified component.
 
     [System.Runtime.InteropServices.ComVisible(true)]
-    public sealed class Version : IComparable, IComparable<Version>, IEquatable<Version>
+    public sealed class Version : IComparable, IComparable<Version>, IEquatable<Version>, ICloneable
     {
         // AssemblyName depends on the order staying the same
         private int _Major;
@@ -84,6 +84,11 @@ namespace System
             _Revision = v.Revision;
         }
 
+        public object Clone()
+        {
+            return new Version(_Major, _Minor, _Build, _Revision);
+        }
+
         // Properties for setting and getting version numbers
         public int Major
         {
@@ -119,35 +124,13 @@ namespace System
         {
             if (version == null)
             {
-#if FEATURE_LEGACYNETCF
-                if (CompatibilitySwitches.IsAppEarlierThanWindowsPhone8)
-                {
-                    throw new ArgumentOutOfRangeException();
-                }
-                else
-                {
-#endif
-                    return 1;
-#if FEATURE_LEGACYNETCF
-                }
-#endif
+                return 1;
             }
 
             Version v = version as Version;
             if (v == null)
             {
-#if FEATURE_LEGACYNETCF
-                if (CompatibilitySwitches.IsAppEarlierThanWindowsPhone8)
-                {
-                    throw new InvalidCastException(Sr.Arg_MustBeVersion);
-                }
-                else
-                {
-#endif
-                    throw new ArgumentException(SR.Arg_MustBeVersion);
-#if FEATURE_LEGACYNETCF
-                }
-#endif                
+                throw new ArgumentException(SR.Arg_MustBeVersion);
             }
 
             if (_Major != v._Major)
@@ -505,10 +488,10 @@ namespace System
                         {
                             return e;
                         }
-                        Contract.Assert(false, "Int32.Parse() did not throw exception but TryParse failed: " + m_exceptionArgument);
+                        Debug.Assert(false, "Int32.Parse() did not throw exception but TryParse failed: " + m_exceptionArgument);
                         return new FormatException(SR.Format_InvalidString);
                     default:
-                        Contract.Assert(false, "Unmatched case in Version.GetVersionParseException() for value: " + m_failure);
+                        Debug.Assert(false, "Unmatched case in Version.GetVersionParseException() for value: " + m_failure);
                         return new ArgumentException(SR.Arg_VersionString);
                 }
             }

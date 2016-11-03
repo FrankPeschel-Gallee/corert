@@ -49,7 +49,7 @@ namespace TypeSystemTests
 
             ArrayType objectArray = _context.GetArrayType(objectType);
 
-            Assert.Equal(TypeHashingAlgorithms.ComputeArrayTypeHashCode(objectType.GetHashCode(), 1), objectArray.GetHashCode());
+            Assert.Equal(TypeHashingAlgorithms.ComputeArrayTypeHashCode(objectType.GetHashCode(), -1), objectArray.GetHashCode());
         }
 
         [Fact]
@@ -167,6 +167,71 @@ namespace TypeSystemTests
             int expHashIntByRef = TypeHashingAlgorithms.ComputeByrefTypeHashCode(expHashInt);
             TypeDesc intByRefType = _context.GetByRefType(intType);
             Assert.Equal(expHashIntByRef, intByRefType.GetHashCode());
+        }
+
+        [Fact]
+        public void TestHashCodeBuilder()
+        {
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xy");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xy"), builder.ToHashCode());
+            }
+
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xyz");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xyz"), builder.ToHashCode());
+            }
+
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xy");
+                builder.Append("");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xy"), builder.ToHashCode());
+            }
+
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xy");
+                builder.Append(".");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xy."), builder.ToHashCode());
+            }
+
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xyz");
+                builder.Append(".");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xyz."), builder.ToHashCode());
+            }
+
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xy");
+                builder.Append("..");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xy.."), builder.ToHashCode());
+            }
+
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xyz");
+                builder.Append("..");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xyz.."), builder.ToHashCode());
+            }
+
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xy");
+                builder.Append(".");
+                builder.Append("Ab");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xy.Ab"), builder.ToHashCode());
+            }
+
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xy");
+                builder.Append(".");
+                builder.Append("Abc");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xy.Abc"), builder.ToHashCode());
+            }
+
+            {
+                var builder = new TypeHashingAlgorithms.HashCodeBuilder("Xyz");
+                builder.Append(".");
+                builder.Append("Abc");
+                Assert.Equal(TypeHashingAlgorithms.ComputeNameHashCode("Xyz.Abc"), builder.ToHashCode());
+            }
         }
     }
 }

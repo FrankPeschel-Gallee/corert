@@ -19,17 +19,7 @@ namespace ILCompiler
 {
     public class CompilationOptions
     {
-        public IReadOnlyDictionary<string, string> InputFilePaths;
-        public IReadOnlyDictionary<string, string> ReferenceFilePaths;
-
         public string OutputFilePath;
-
-        public string SystemModuleName;
-
-        public TargetOS TargetOS;
-        public TargetArchitecture TargetArchitecture;
-
-        public bool MultiFile;
 
         public bool IsCppCodeGen;
         public bool NoLineNumbers;
@@ -37,12 +27,11 @@ namespace ILCompiler
         public bool FullLog;
         public bool Verbose;
     }
-    
-    public partial class Compilation : ICompilationRootProvider
+
+    public partial class Compilation
     {
         private readonly CompilerTypeSystemContext _typeSystemContext;
         private readonly CompilationOptions _options;
-        private readonly TypeInitialization _typeInitManager;
 
         private NodeFactory _nodeFactory;
         private DependencyAnalyzerBase<NodeFactory> _dependencyGraph;
@@ -52,28 +41,14 @@ namespace ILCompiler
         private ILCompiler.CppCodeGen.CppWriter _cppWriter = null;
         private CompilationModuleGroup _compilationModuleGroup;
 
-        public Compilation(CompilationOptions options)
+        public Compilation(CompilationOptions options, CompilerTypeSystemContext context, CompilationModuleGroup compilationGroup)
         {
             _options = options;
 
-            _typeSystemContext = new CompilerTypeSystemContext(new TargetDetails(options.TargetArchitecture, options.TargetOS));
-            _typeSystemContext.InputFilePaths = options.InputFilePaths;
-            _typeSystemContext.ReferenceFilePaths = options.ReferenceFilePaths;
+            _nameMangler = new NameMangler(options.IsCppCodeGen);
 
-            _typeSystemContext.SetSystemModule(_typeSystemContext.GetModuleForSimpleName(options.SystemModuleName));
-
-            _nameMangler = new NameMangler(this);
-
-            _typeInitManager = new TypeInitialization();
-
-            if (options.MultiFile)
-            {
-                _compilationModuleGroup = new MultiFileCompilationModuleGroup(_typeSystemContext, this);
-            }
-            else
-            {
-                _compilationModuleGroup = new SingleFileCompilationModuleGroup(_typeSystemContext, this);
-            }
+            _typeSystemContext = context;
+            _compilationModuleGroup = compilationGroup;
         }
 
         public CompilerTypeSystemContext TypeSystemContext
@@ -106,14 +81,6 @@ namespace ILCompiler
             set;
         }
 
-        internal bool IsCppCodeGen
-        {
-            get
-            {
-                return _options.IsCppCodeGen;
-            }
-        }
-
         internal CompilationOptions Options
         {
             get
@@ -128,7 +95,7 @@ namespace ILCompiler
         {
             // Flush the cache when it grows too big
             if (_methodILCache.Count > 1000)
-                _methodILCache= new ILProvider();
+                _methodILCache = new ILProvider();
 
             return _methodILCache.GetMethodIL(method);
         }
@@ -139,7 +106,26 @@ namespace ILCompiler
         {
             NodeFactory.NameMangler = NameMangler;
 
-            _nodeFactory = new NodeFactory(_typeSystemContext, _typeInitManager, _compilationModuleGroup, _options.IsCppCodeGen);
+            string systemModuleName = ((IAssemblyDesc)_typeSystemContext.SystemModule).GetName().Name;
+
+            // TODO: just something to get Runtime.Base compiled
+            if (systemModuleName != "System.Private.CoreLib")
+            {
+                NodeFactory.CompilationUnitPrefix = systemModuleName.Replace(".", "_");
+            }
+            else
+            {
+                NodeFactory.CompilationUnitPrefix = NameMangler.SanitizeName(Path.GetFileNameWithoutExtension(Options.OutputFilePath));
+            }
+
+            if (_options.IsCppCodeGen)
+            {
+                _nodeFactory = new CppCodegenNodeFactory(_typeSystemContext, _compilationModuleGroup);
+            }
+            else
+            {
+                _nodeFactory = new RyuJitNodeFactory(_typeSystemContext, _compilationModuleGroup);
+            }
 
             // Choose which dependency graph implementation to use based on the amount of logging requested.
             if (_options.DgmlLog == null)
@@ -163,19 +149,6 @@ namespace ILCompiler
 
             _nodeFactory.AttachToDependencyGraph(_dependencyGraph);
 
-            _compilationModuleGroup.AddWellKnownTypes();
-            _compilationModuleGroup.AddCompilationRoots();
-
-            if (!_options.IsCppCodeGen && !_options.MultiFile)
-            {
-                // TODO: build a general purpose way to hook up pieces that would be part of the core library
-                //       if factoring of the core library respected how things are, versus how they would be in
-                //       a magic world (future customers of this mechanism will be interop and serialization).
-                var refExec = _typeSystemContext.GetModuleForSimpleName("System.Private.Reflection.Execution");
-                var exec = refExec.GetKnownType("Internal.Reflection.Execution", "ReflectionExecution");
-                AddCompilationRoot(exec.GetStaticConstructor(), "Reflection execution");
-            }
-
             if (_options.IsCppCodeGen)
             {
                 _cppWriter = new CppCodeGen.CppWriter(this);
@@ -184,7 +157,7 @@ namespace ILCompiler
 
                 var nodes = _dependencyGraph.MarkedNodeList;
 
-                _cppWriter.OutputCode(nodes, _compilationModuleGroup.StartupCodeMain);
+                _cppWriter.OutputCode(nodes, _compilationModuleGroup.StartupCodeMain, _nodeFactory);
             }
             else
             {
@@ -206,25 +179,6 @@ namespace ILCompiler
                 }
             }
         }
-        
-        #region ICompilationRootProvider implementation
-
-        public void AddCompilationRoot(MethodDesc method, string reason, string exportName = null)
-        {
-            var methodEntryPoint = _nodeFactory.MethodEntrypoint(method);
-
-            _dependencyGraph.AddRoot(methodEntryPoint, reason);
-
-            if (exportName != null)
-                _nodeFactory.NodeAliases.Add(methodEntryPoint, exportName);
-        }
-
-        public void AddCompilationRoot(TypeDesc type, string reason)
-        {
-            _dependencyGraph.AddRoot(_nodeFactory.ConstructedTypeSymbol(type), reason);
-        }
-        
-        #endregion
 
         private void ComputeDependencyNodeDependencies(List<DependencyNodeCore<NodeFactory>> obj)
         {
@@ -307,7 +261,7 @@ namespace ILCompiler
 
         public bool HasLazyStaticConstructor(TypeDesc type)
         {
-            return _typeInitManager.HasLazyStaticConstructor(type);
+            return _typeSystemContext.HasLazyStaticConstructor(type);
         }
 
         public MethodDebugInformation GetDebugInfo(MethodIL methodIL)

@@ -2,17 +2,13 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System.Text;
-using System.Runtime;
-using System.Collections;
-using System.Diagnostics;
-using System.Globalization;
-using System.Collections.Generic;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Diagnostics.Contracts;
 using System.Collections.Concurrent;
-
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Diagnostics.Contracts;
+using System.Globalization;
+using System.Runtime;
+using System.Text;
 
 using Internal.Runtime.Augments;
 using Internal.Reflection.Core.NonPortable;
@@ -288,7 +284,7 @@ namespace System
                     }
 
                 default:
-                    Contract.Assert(false, "Invalid Object type in Format");
+                    Debug.Assert(false, "Invalid Object type in Format");
                     throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
             }
         }
@@ -373,7 +369,7 @@ namespace System
                     }
 
                 default:
-                    Contract.Assert(false, "Invalid Object type in Format");
+                    Debug.Assert(false, "Invalid Object type in Format");
                     throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
             }
         }
@@ -383,7 +379,7 @@ namespace System
         //
         private static String DoFormatG(EnumInfo enumInfo, ulong rawValue)
         {
-            Contract.Requires(enumInfo != null);
+            Debug.Assert(enumInfo != null);
             if (!enumInfo.HasFlagsAttribute) // Not marked with Flags attribute
             {
                 // Try to see if its one of the enum values, then we return a String back else the value
@@ -404,7 +400,7 @@ namespace System
         //
         private static String DoFormatF(EnumInfo enumInfo, ulong rawValue)
         {
-            Contract.Requires(enumInfo != null);
+            Debug.Assert(enumInfo != null);
 
             // These values are sorted by value. Don't change this
             KeyValuePair<String, ulong>[] namesAndValues = enumInfo.NamesAndValues;
@@ -660,6 +656,20 @@ namespace System
             return result;
         }
 
+        public static TEnum Parse<TEnum>(String value) where TEnum : struct
+        {
+            return Parse<TEnum>(value, ignoreCase: false);
+        }
+
+        public static TEnum Parse<TEnum>(String value, bool ignoreCase) where TEnum : struct
+        {
+            Object result;
+            Exception exception;
+            if (!TryParseEnum(typeof(TEnum), value, ignoreCase, out result, out exception))
+                throw exception;
+            return (TEnum)result;
+        }
+
         public static unsafe Object ToObject(Type enumType, Object value)
         {
             if (enumType == null)
@@ -681,6 +691,18 @@ namespace System
 
             EETypePtr enumEEType = enumType.TypeHandle.ToEETypePtr();
             return RuntimeImports.RhBox(enumEEType, &rawValue);  //@todo: Not big-endian compatible.
+        }
+
+        public static bool TryParse(Type enumType, String value, bool ignoreCase, out Object result)
+        {
+            Exception exception;
+            return TryParseEnum(enumType, value, ignoreCase, out result, out exception);
+        }
+
+        public static bool TryParse(Type enumType, String value, out Object result)
+        {
+            Exception exception;
+            return TryParseEnum(enumType, value, false, out result, out exception);
         }
 
         public static bool TryParse<TEnum>(String value, bool ignoreCase, out TEnum result) where TEnum : struct
@@ -761,9 +783,7 @@ namespace System
             if (!runtimeTypeHandle.ToEETypePtr().IsEnum)
                 throw new ArgumentException(SR.Arg_MustBeEnum);
 
-            // We know this cast will succeed as we already checked for the existence of a RuntimeTypeHandle.
-            RuntimeType runtimeEnumType = (RuntimeType)enumType;
-            return s_enumInfoCache.GetOrAdd(runtimeEnumType);
+            return s_enumInfoCache.GetOrAdd(new TypeUnificationKey(enumType));
         }
 
         //
@@ -877,8 +897,7 @@ namespace System
             if (enumType == null)
                 throw new ArgumentNullException("enumType");
 
-            RuntimeType runtimeEnumType = enumType as RuntimeType;
-            if (runtimeEnumType == null)
+            if (!enumType.IsRuntimeImplemented())
                 throw new ArgumentException(SR.Arg_MustBeType, "enumType");
 
             if (value == null)
@@ -902,7 +921,7 @@ namespace System
                 return false;
             }
 
-            EETypePtr enumEEType = runtimeEnumType.TypeHandle.ToEETypePtr();
+            EETypePtr enumEEType = enumType.TypeHandle.ToEETypePtr();
             if (!enumEEType.IsEnum)
                 throw new ArgumentException(SR.Arg_MustBeEnum, "enumType");
 
@@ -910,9 +929,9 @@ namespace System
                 return true;
 
             // Parse as string. Now (and only now) do we look for metadata information.
-            EnumInfo enumInfo = RuntimeAugments.Callbacks.GetEnumInfoIfAvailable(runtimeEnumType);
+            EnumInfo enumInfo = RuntimeAugments.Callbacks.GetEnumInfoIfAvailable(enumType);
             if (enumInfo == null)
-                throw RuntimeAugments.Callbacks.CreateMissingMetadataException(runtimeEnumType);
+                throw RuntimeAugments.Callbacks.CreateMissingMetadataException(enumType);
             ulong v = 0;
 
             // Port note: The docs are silent on how multiple matches are resolved when doing case-insensitive parses.
@@ -1124,11 +1143,11 @@ namespace System
         }
 
 
-        private sealed class EnumInfoUnifier : ConcurrentUnifierW<RuntimeType, EnumInfo>
+        private sealed class EnumInfoUnifier : ConcurrentUnifierW<TypeUnificationKey, EnumInfo>
         {
-            protected override EnumInfo Factory(RuntimeType key)
+            protected override EnumInfo Factory(TypeUnificationKey key)
             {
-                return RuntimeAugments.Callbacks.GetEnumInfoIfAvailable(key);
+                return RuntimeAugments.Callbacks.GetEnumInfoIfAvailable(key.Type);
             }
         }
 
@@ -1191,7 +1210,7 @@ namespace System
                 return TypeCode.Char;
             }
 
-            Contract.Assert(false, "Unknown underlying type.");
+            Debug.Assert(false, "Unknown underlying type.");
             throw new InvalidOperationException(SR.InvalidOperation_UnknownEnumType);
         }
 

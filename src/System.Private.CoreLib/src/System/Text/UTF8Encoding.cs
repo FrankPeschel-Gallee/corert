@@ -15,9 +15,9 @@
 #define FASTLOOP
 
 
-using System;
-using System.Globalization;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
+using System.Globalization;
 
 namespace System.Text
 {
@@ -47,9 +47,13 @@ namespace System.Text
 
             Surrogate:
             Real Unicode value = (HighSurrogate - 0xD800) * 0x400 + (LowSurrogate - 0xDC00) + 0x10000
-         */
+        */
 
         private const int UTF8_CODEPAGE = 65001;
+
+        // Used by Encoding.UTF8 for lazy initialization
+        // The initialization code will not be run until a static member of the class is referenced
+        internal static readonly UTF8Encoding s_default = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
 
         // Yes, the idea of emitting U+FEFF as a UTF-8 identifier has made it into
         // the standard.
@@ -193,7 +197,7 @@ namespace System.Text
         {
             return EncodingForwarder.GetString(this, bytes, index, count);
         }
-        
+
         // End of overridden methods which use EncodingForwarder
 
         // To simplify maintenance, the structure of GetByteCount and GetBytes should be
@@ -249,7 +253,7 @@ namespace System.Text
                         // Case of surrogates in the fallback.
                         if (fallbackBuffer != null && fallbackBuffer.bFallingBack)
                         {
-                            Contract.Assert(ch >= 0xD800 && ch <= 0xDBFF,
+                            Debug.Assert(ch >= 0xD800 && ch <= 0xDBFF,
                                 "[UTF8Encoding.GetBytes]expected high surrogate, not 0x" + ((int)ch).ToString("X4", FormatProvider.InvariantCulture));
 
                             ch = fallbackBuffer.InternalGetNextChar();
@@ -289,7 +293,7 @@ namespace System.Text
 
                 if (ch > 0)
                 {
-                    Contract.Assert(ch >= 0xD800 && ch <= 0xDBFF,
+                    Debug.Assert(ch >= 0xD800 && ch <= 0xDBFF,
                         "[UTF8Encoding.GetBytes]expected high surrogate, not 0x" + ((int)ch).ToString("X4", FormatProvider.InvariantCulture));
 
                     // use separate helper variables for local contexts so that the jit optimizations
@@ -572,7 +576,7 @@ namespace System.Text
             }
 #endif
 
-            Contract.Assert(fallbackBuffer == null || fallbackBuffer.Remaining == 0,
+            Debug.Assert(fallbackBuffer == null || fallbackBuffer.Remaining == 0,
                 "[UTF8Encoding.GetByteCount]Expected Empty fallback buffer");
 
             return byteCount;
@@ -602,10 +606,10 @@ namespace System.Text
         internal override unsafe int GetBytes(char* chars, int charCount,
                                                 byte* bytes, int byteCount, EncoderNLS baseEncoder)
         {
-            Contract.Assert(chars != null, "[UTF8Encoding.GetBytes]chars!=null");
-            Contract.Assert(byteCount >= 0, "[UTF8Encoding.GetBytes]byteCount >=0");
-            Contract.Assert(charCount >= 0, "[UTF8Encoding.GetBytes]charCount >=0");
-            Contract.Assert(bytes != null, "[UTF8Encoding.GetBytes]bytes!=null");
+            Debug.Assert(chars != null, "[UTF8Encoding.GetBytes]chars!=null");
+            Debug.Assert(byteCount >= 0, "[UTF8Encoding.GetBytes]byteCount >=0");
+            Debug.Assert(charCount >= 0, "[UTF8Encoding.GetBytes]charCount >=0");
+            Debug.Assert(bytes != null, "[UTF8Encoding.GetBytes]bytes!=null");
 
             UTF8Encoder encoder = null;
 
@@ -661,7 +665,7 @@ namespace System.Text
                         // Case of leftover surrogates in the fallback buffer
                         if (fallbackBuffer != null && fallbackBuffer.bFallingBack)
                         {
-                            Contract.Assert(ch >= 0xD800 && ch <= 0xDBFF,
+                            Debug.Assert(ch >= 0xD800 && ch <= 0xDBFF,
                                 "[UTF8Encoding.GetBytes]expected high surrogate, not 0x" + ((int)ch).ToString("X4", FormatProvider.InvariantCulture));
 
                             int cha = ch;
@@ -695,7 +699,7 @@ namespace System.Text
                 if (ch > 0)
                 {
                     // We have a high surrogate left over from a previous loop.
-                    Contract.Assert(ch >= 0xD800 && ch <= 0xDBFF,
+                    Debug.Assert(ch >= 0xD800 && ch <= 0xDBFF,
                         "[UTF8Encoding.GetBytes]expected high surrogate, not 0x" + ((int)ch).ToString("X4", FormatProvider.InvariantCulture));
 
                     // use separate helper variables for local contexts so that the jit optimizations
@@ -798,7 +802,7 @@ namespace System.Text
                         if (ch > 0xFFFF)
                             pSrc--;                                 // Was surrogate, didn't use 2nd part either
                     }
-                    Contract.Assert(pSrc >= chars || pTarget == bytes,
+                    Debug.Assert(pSrc >= chars || pTarget == bytes,
                         "[UTF8Encoding.GetBytes]Expected pSrc to be within buffer or to throw with insufficient room.");
                     ThrowBytesOverflow(encoder, pTarget == bytes);  // Throw if we must
                     ch = 0;                                         // Nothing left over (we backed up to start of pair if supplimentary)
@@ -1039,7 +1043,7 @@ namespace System.Text
                     pTarget++;
                 }
 
-                Contract.Assert(pTarget <= pAllocatedBufferEnd, "[UTF8Encoding.GetBytes]pTarget <= pAllocatedBufferEnd");
+                Debug.Assert(pTarget <= pAllocatedBufferEnd, "[UTF8Encoding.GetBytes]pTarget <= pAllocatedBufferEnd");
 
 #endif // FASTLOOP
 
@@ -1050,14 +1054,14 @@ namespace System.Text
             // Do we have to set the encoder bytes?
             if (encoder != null)
             {
-                Contract.Assert(!encoder.MustFlush || ch == 0,
+                Debug.Assert(!encoder.MustFlush || ch == 0,
                     "[UTF8Encoding.GetBytes] Expected no mustflush or 0 leftover ch");
 
                 encoder.surrogateChar = ch;
                 encoder.m_charsUsed = (int)(pSrc - chars);
             }
 
-            Contract.Assert(fallbackBuffer == null || fallbackBuffer.Remaining == 0 ||
+            Debug.Assert(fallbackBuffer == null || fallbackBuffer.Remaining == 0 ||
                 baseEncoder == null || !baseEncoder.m_throwOnOverflow,
                 "[UTF8Encoding.GetBytes]Expected empty fallback buffer if not converting");
 
@@ -1081,8 +1085,8 @@ namespace System.Text
         // kept the same as much as possible
         internal override unsafe int GetCharCount(byte* bytes, int count, DecoderNLS baseDecoder)
         {
-            Contract.Assert(count >= 0, "[UTF8Encoding.GetCharCount]count >=0");
-            Contract.Assert(bytes != null, "[UTF8Encoding.GetCharCount]bytes!=null");
+            Debug.Assert(count >= 0, "[UTF8Encoding.GetCharCount]count >=0");
+            Debug.Assert(bytes != null, "[UTF8Encoding.GetCharCount]bytes!=null");
 
             // Initialize stuff
             byte* pSrc = bytes;
@@ -1102,7 +1106,7 @@ namespace System.Text
 
                 // Shouldn't have anything in fallback buffer for GetCharCount
                 // (don't have to check m_throwOnOverflow for count)
-                Contract.Assert(!decoder.InternalHasFallbackBuffer || decoder.FallbackBuffer.Remaining == 0,
+                Debug.Assert(!decoder.InternalHasFallbackBuffer || decoder.FallbackBuffer.Remaining == 0,
                     "[UTF8Encoding.GetCharCount]Expected empty fallback buffer at start");
             }
 
@@ -1141,7 +1145,7 @@ namespace System.Text
 
                 if ((ch & FinalByte) == 0)
                 {
-                    Contract.Assert((ch & (SupplimentarySeq | ThreeByteSeq)) != 0,
+                    Debug.Assert((ch & (SupplimentarySeq | ThreeByteSeq)) != 0,
                         "[UTF8Encoding.GetChars]Invariant volation");
 
                     if ((ch & SupplimentarySeq) != 0)
@@ -1492,7 +1496,7 @@ namespace System.Text
 
             // Shouldn't have anything in fallback buffer for GetCharCount
             // (don't have to check m_throwOnOverflow for count)
-            Contract.Assert(fallback == null || fallback.Remaining == 0,
+            Debug.Assert(fallback == null || fallback.Remaining == 0,
                 "[UTF8Encoding.GetCharCount]Expected empty fallback buffer at end");
 
             return charCount;
@@ -1511,10 +1515,10 @@ namespace System.Text
         internal override unsafe int GetChars(byte* bytes, int byteCount,
                                                 char* chars, int charCount, DecoderNLS baseDecoder)
         {
-            Contract.Assert(chars != null, "[UTF8Encoding.GetChars]chars!=null");
-            Contract.Assert(byteCount >= 0, "[UTF8Encoding.GetChars]count >=0");
-            Contract.Assert(charCount >= 0, "[UTF8Encoding.GetChars]charCount >=0");
-            Contract.Assert(bytes != null, "[UTF8Encoding.GetChars]bytes!=null");
+            Debug.Assert(chars != null, "[UTF8Encoding.GetChars]chars!=null");
+            Debug.Assert(byteCount >= 0, "[UTF8Encoding.GetChars]count >=0");
+            Debug.Assert(charCount >= 0, "[UTF8Encoding.GetChars]charCount >=0");
+            Debug.Assert(bytes != null, "[UTF8Encoding.GetChars]bytes!=null");
 
             byte* pSrc = bytes;
             char* pTarget = chars;
@@ -1532,7 +1536,7 @@ namespace System.Text
 
                 // Shouldn't have anything in fallback buffer for GetChars
                 // (don't have to check m_throwOnOverflow for chars, we always use all or none so always should be empty)
-                Contract.Assert(!decoder.InternalHasFallbackBuffer || decoder.FallbackBuffer.Remaining == 0,
+                Debug.Assert(!decoder.InternalHasFallbackBuffer || decoder.FallbackBuffer.Remaining == 0,
                     "[UTF8Encoding.GetChars]Expected empty fallback buffer at start");
             }
 
@@ -1571,7 +1575,7 @@ namespace System.Text
                 if ((ch & FinalByte) == 0)
                 {
                     // Not at last byte yet
-                    Contract.Assert((ch & (SupplimentarySeq | ThreeByteSeq)) != 0,
+                    Debug.Assert((ch & (SupplimentarySeq | ThreeByteSeq)) != 0,
                         "[UTF8Encoding.GetChars]Invariant volation");
 
                     if ((ch & SupplimentarySeq) != 0)
@@ -1640,14 +1644,14 @@ namespace System.Text
                 {
                     // Ran out of buffer space
                     // Need to throw an exception?
-                    Contract.Assert(pSrc >= bytes || pTarget == chars,
+                    Debug.Assert(pSrc >= bytes || pTarget == chars,
                         "[UTF8Encoding.GetChars]Expected to throw or remain in byte buffer after fallback");
                     fallback.InternalReset();
                     ThrowCharsOverflow(baseDecoder, pTarget == chars);
                     ch = 0;
                     break;
                 }
-                Contract.Assert(pSrc >= bytes,
+                Debug.Assert(pSrc >= bytes,
                     "[UTF8Encoding.GetChars]Expected invalid byte sequence to have remained within the byte array");
                 ch = 0;
                 continue;
@@ -1741,7 +1745,7 @@ namespace System.Text
 
                     // Throw that we don't have enough room (pSrc could be < chars if we had started to process
                     // a 4 byte sequence alredy)
-                    Contract.Assert(pSrc >= bytes || pTarget == chars,
+                    Debug.Assert(pSrc >= bytes || pTarget == chars,
                         "[UTF8Encoding.GetChars]Expected pSrc to be within input buffer or throw due to no output]");
                     ThrowCharsOverflow(baseDecoder, pTarget == chars);
 
@@ -2013,7 +2017,7 @@ namespace System.Text
                 }
 #endif // FASTLOOP
 
-                Contract.Assert(pTarget <= pAllocatedBufferEnd, "[UTF8Encoding.GetChars]pTarget <= pAllocatedBufferEnd");
+                Debug.Assert(pTarget <= pAllocatedBufferEnd, "[UTF8Encoding.GetChars]pTarget <= pAllocatedBufferEnd");
 
                 // no pending bits at this point
                 ch = 0;
@@ -2040,7 +2044,7 @@ namespace System.Text
                 // This'll back us up the appropriate # of bytes if we didn't get anywhere
                 if (!FallbackInvalidByteSequence(ref pSrc, ch, fallback, ref pTarget))
                 {
-                    Contract.Assert(pSrc >= bytes || pTarget == chars,
+                    Debug.Assert(pSrc >= bytes || pTarget == chars,
                         "[UTF8Encoding.GetChars]Expected to throw or remain in byte buffer while flushing");
 
                     // Ran out of buffer space
@@ -2048,7 +2052,7 @@ namespace System.Text
                     fallback.InternalReset();
                     ThrowCharsOverflow(baseDecoder, pTarget == chars);
                 }
-                Contract.Assert(pSrc >= bytes,
+                Debug.Assert(pSrc >= bytes,
                     "[UTF8Encoding.GetChars]Expected flushing invalid byte sequence to have remained within the byte array");
                 ch = 0;
             }
@@ -2059,7 +2063,7 @@ namespace System.Text
 
                 // If we're storing flush data we expect all bits to be used or else
                 // we're stuck in the middle of a conversion
-                Contract.Assert(!baseDecoder.MustFlush || ch == 0 || !baseDecoder.m_throwOnOverflow,
+                Debug.Assert(!baseDecoder.MustFlush || ch == 0 || !baseDecoder.m_throwOnOverflow,
                     "[UTF8Encoding.GetChars]Expected no must flush or no left over bits or no throw on overflow.");
 
                 // Remember our leftover bits.
@@ -2070,7 +2074,7 @@ namespace System.Text
 
             // Shouldn't have anything in fallback buffer for GetChars
             // (don't have to check m_throwOnOverflow for chars)
-            Contract.Assert(fallback == null || fallback.Remaining == 0,
+            Debug.Assert(fallback == null || fallback.Remaining == 0,
                 "[UTF8Encoding.GetChars]Expected empty fallback buffer at end");
 
             return PtrDiff(pTarget, chars);

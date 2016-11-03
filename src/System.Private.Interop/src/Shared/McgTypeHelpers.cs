@@ -16,6 +16,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Runtime.InteropServices;
@@ -88,7 +89,7 @@ namespace System.Runtime.InteropServices
 #if RHTESTCL
             : Type
 #else
-            : Internal.Reflection.Extensibility.ExtensibleType
+            : Internal.Reflection.Extensibility.ExtensibleTypeInfo
 #endif
         {
             /// <summary>
@@ -112,12 +113,16 @@ namespace System.Runtime.InteropServices
 #if RHTESTCL
             public string FullName { get { return _fullTypeName; } }
 #else
+            public override Assembly Assembly { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
             public override String AssemblyQualifiedName { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
 
+            public override Type BaseType { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
             public override Type DeclaringType { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
             public override String FullName { get { return _fullTypeName; } }
             public override int GenericParameterPosition { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
             public override Type[] GenericTypeArguments { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
+
+            public override Guid GUID { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
 
             public override bool IsConstructedGenericType { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
             public override bool IsGenericParameter { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
@@ -126,14 +131,30 @@ namespace System.Runtime.InteropServices
             public override String Namespace { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
 
             public override int GetArrayRank() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override ConstructorInfo[] GetConstructors(BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
             public override Type GetElementType() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override EventInfo GetEvent(string name, BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override EventInfo[] GetEvents(BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override FieldInfo GetField(string name, BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override FieldInfo[] GetFields(BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
             public override Type GetGenericTypeDefinition() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override Type GetInterface(string name, bool ignoreCase) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override Type[] GetInterfaces() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override MemberInfo[] GetMembers(BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override MethodInfo[] GetMethods(BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override Type GetNestedType(string name, BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override Type[] GetNestedTypes(BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            public override PropertyInfo[] GetProperties(BindingFlags bindingAttr) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+
+            public override object InvokeMember(string name, BindingFlags invokeAttr, Binder binder, object target, object[] args, ParameterModifier[] modifiers, CultureInfo culture, string[] namedParameters) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
 
             public override Type MakeArrayType() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
             public override Type MakeArrayType(int rank) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
             public override Type MakeByRefType() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
             public override Type MakeGenericType(params Type[] typeArguments) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
             public override Type MakePointerType() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+
+            public override Module Module { get { throw new System.Reflection.MissingMetadataException(_fullTypeName); } }
 
             public override String ToString()
             {
@@ -148,7 +169,7 @@ namespace System.Runtime.InteropServices
                 //
                 // We guarantee uniqueness in Mcg marshalling code
                 //
-                if (o == this)
+                if (o == (object)this)   // cast to object added so keep C# from warning us that we don't look like we know which operator== we want to call.
                     return true;
 
                 return false;
@@ -158,6 +179,14 @@ namespace System.Runtime.InteropServices
             {
                 return _fullTypeName.GetHashCode();
             }
+
+            protected override bool IsArrayImpl() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            protected override bool IsByRefImpl() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            protected override bool IsPointerImpl() { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            protected override ConstructorInfo GetConstructorImpl(BindingFlags bindingAttr, Binder binder, CallingConventions callConvention, Type[] types, ParameterModifier[] modifiers) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            protected override MethodInfo GetMethodImpl(string name, BindingFlags bindingAttr, Binder binder, CallingConventions callConvention, Type[] types, ParameterModifier[] modifiers) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+            protected override PropertyInfo GetPropertyImpl(string name, BindingFlags bindingAttr, Binder binder, Type returnType, Type[] types, ParameterModifier[] modifiers) { throw new System.Reflection.MissingMetadataException(_fullTypeName); }
+    
 #endif //RHTESTCL
         }
 
@@ -643,7 +672,7 @@ namespace System.Runtime.InteropServices
                         // Concat all missing Type Names into one message
                         for (int i = 0; i < missTypeNames.Count; i++)
                         {
-                            msg += String.Format(SR.ComTypeMarshalling_MissingInteropData, missTypeNames[i]);
+                            msg += SR.Format(SR.ComTypeMarshalling_MissingInteropData, missTypeNames[i]);
                             if (i != missTypeNames.Count - 1)
                                 msg += Environment.NewLine;
                         }
@@ -653,7 +682,7 @@ namespace System.Runtime.InteropServices
 
                 // case 3: We can get type name but not McgTypeInfo, maybe another case similar to case 2
                 // definitely is a bug.
-                msg = String.Format(SR.ComTypeMarshalling_MissingInteropData, Type.GetTypeFromHandle(interfaceType));
+                msg = SR.Format(SR.ComTypeMarshalling_MissingInteropData, Type.GetTypeFromHandle(interfaceType));
             }
             catch (MissingMetadataException ex)
             {
@@ -685,22 +714,23 @@ namespace System.Runtime.InteropServices
         internal static string GetDisplayName(this RuntimeTypeHandle handle)
         {
 #if ENABLE_WINRT
-            return Internal.Reflection.Execution.PayForPlayExperience.MissingMetadataExceptionCreator.ComputeUsefulPertainantIfPossible(Type.GetTypeFromHandle(handle));
+            return Internal.Runtime.Augments.RuntimeAugments.GetLastResortString(handle);
 #else
             return handle.ToString();
 #endif
         }
 
-        internal static bool IsClass(this RuntimeTypeHandle handle)
+        internal static bool IsComClass(this RuntimeTypeHandle handle)
         {
-#if ENABLE_WINRT
-            return  !InteropExtensions.IsInterface(handle) && 
-                    !handle.IsValueType() && 
-                    !InteropExtensions.AreTypesAssignable(handle, typeof(Delegate).TypeHandle);
+#if CORECLR        
+            return InteropExtensions.IsClass(handle);        
 #else
-            return false;
+            return !InteropExtensions.IsInterface(handle) &&
+                    !handle.IsValueType() &&
+                    !InteropExtensions.AreTypesAssignable(handle, typeof(Delegate).TypeHandle);
 #endif
         }
+
 
         internal static bool IsIJupiterObject(this RuntimeTypeHandle interfaceType)
         {
@@ -713,7 +743,7 @@ namespace System.Runtime.InteropServices
 
         internal static bool IsIInspectable(this RuntimeTypeHandle interfaceType)
         {
-#if ENABLE_WINRT
+#if ENABLE_MIN_WINRT
             return interfaceType.Equals(InternalTypes.IInspectable);
 #else
             return false;
@@ -750,7 +780,7 @@ namespace System.Runtime.InteropServices
                 return interfaceInfo.HasDynamicAdapterClass;
             }
 
-#if ENABLE_WINRT
+#if ENABLE_MIN_WINRT
            throw new MissingInteropDataException(SR.DelegateMarshalling_MissingInteropData, Type.GetTypeFromHandle(interfaceType));
 #else
             Environment.FailFast("HasDynamicAdapterClass.");

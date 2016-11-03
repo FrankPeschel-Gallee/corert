@@ -114,6 +114,15 @@ namespace Internal.Runtime
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct EEType
     {
+#if BIT64
+        private const int POINTER_SIZE = 8;
+        private const int PADDING = 1; // _numComponents is padded by one Int32 to make the first element pointer-aligned
+#else
+        private const int POINTER_SIZE = 4;
+        private const int PADDING = 0;
+#endif
+        internal const int SZARRAY_BASE_SIZE = POINTER_SIZE + POINTER_SIZE + (1 + PADDING) * 4;
+
         [StructLayout(LayoutKind.Explicit)]
         private unsafe struct RelatedTypeUnion
         {
@@ -349,6 +358,32 @@ namespace Internal.Runtime
                 return IsParameterizedType && ParameterizedTypeShape != 0;
             }
         }
+
+
+        internal int ArrayRank
+        {
+            get
+            {
+                Debug.Assert(this.IsArray);
+
+                int boundsSize = (int)this.ParameterizedTypeShape - SZARRAY_BASE_SIZE;
+                if (boundsSize > 0)
+                {
+                    // Multidim array case: Base size includes space for two Int32s
+                    // (upper and lower bound) per each dimension of the array.
+                    return boundsSize / (2 * sizeof(int));
+                }
+                return 1;
+            }
+        }
+
+        internal bool IsSzArray
+        {
+            get
+            {
+                return IsArray && ParameterizedTypeShape == SZARRAY_BASE_SIZE;
+            }
+        }
         
         internal bool IsGeneric
         {
@@ -366,7 +401,6 @@ namespace Internal.Runtime
             }
         }
 
-#if CORERT
         internal EEType* GenericDefinition
         {
             get
@@ -375,9 +409,20 @@ namespace Internal.Runtime
                 UInt32 cbOffset = GetFieldOffset(EETypeField.ETF_GenericDefinition);
                 fixed (EEType* pThis = &this)
                 {
-                    return *(EEType**)((byte*)pThis + cbOffset);
+                    return ((EETypeRef*)((byte*)pThis + cbOffset))->Value;
                 }
             }
+#if TYPE_LOADER_IMPLEMENTATION
+            set
+            {
+                Debug.Assert(IsGeneric && IsDynamicType);
+                UInt32 cbOffset = GetFieldOffset(EETypeField.ETF_GenericDefinition);
+                fixed (EEType* pThis = &this)
+                {
+                    *((EEType**)((byte*)pThis + cbOffset)) = value;
+                }
+            }
+#endif
         }
 
         internal uint GenericArity
@@ -388,13 +433,13 @@ namespace Internal.Runtime
                 UInt32 cbOffset = GetFieldOffset(EETypeField.ETF_GenericComposition);
                 fixed (EEType* pThis = &this)
                 {
-                    // Number of generic arguments is the first DWORD of the composition stream.
-                    return **(UInt32**)((byte*)pThis + cbOffset);
+                    // Number of generic arguments is the first UInt16 of the composition stream.
+                    return **(UInt16**)((byte*)pThis + cbOffset);
                 }
             }
         }
 
-        internal EEType** GenericArguments
+        internal EETypeRef* GenericArguments
         {
             get
             {
@@ -402,9 +447,9 @@ namespace Internal.Runtime
                 UInt32 cbOffset = GetFieldOffset(EETypeField.ETF_GenericComposition);
                 fixed (EEType* pThis = &this)
                 {
-                    // Generic arguments follow after a (padded) DWORD specifying their count
+                    // Generic arguments follow after a (padded) UInt16 specifying their count
                     // in the generic composition stream.
-                    return ((*(EEType***)((byte*)pThis + cbOffset)) + 1);
+                    return ((*(EETypeRef**)((byte*)pThis + cbOffset)) + 1);
                 }
             }
         }
@@ -414,7 +459,10 @@ namespace Internal.Runtime
             get
             {
                 Debug.Assert(IsGeneric);
-                Debug.Assert(HasGenericVariance);
+
+                if (!HasGenericVariance)
+                    return null;
+
                 UInt32 cbOffset = GetFieldOffset(EETypeField.ETF_GenericComposition);
                 fixed (EEType* pThis = &this)
                 {
@@ -423,7 +471,6 @@ namespace Internal.Runtime
                 }
             }
         }
-#endif // CORERT
 
         internal bool IsPointerType
         {
@@ -1107,6 +1154,10 @@ namespace Internal.Runtime
             if (IsNullable || (RareFlags & EETypeRareFlags.IsDynamicTypeWithSealedVTableEntriesFlag) != 0)
                 cbOffset += (UInt32)IntPtr.Size;
 
+            // in the case of sealed vtable entries on static types, we have a UInt sized relative pointer
+            if ((RareFlags & EETypeRareFlags.HasSealedVTableEntriesFlag) != 0)
+                cbOffset += 4;
+
             if (eField == EETypeField.ETF_DynamicDispatchMap)
             {
                 Debug.Assert(IsDynamicType);
@@ -1115,7 +1166,6 @@ namespace Internal.Runtime
             if ((RareFlags & EETypeRareFlags.HasDynamicallyAllocatedDispatchMapFlag) != 0)
                 cbOffset += (UInt32)IntPtr.Size;
 
-#if CORERT
             if (eField == EETypeField.ETF_GenericDefinition)
             {
                 Debug.Assert(IsGeneric);
@@ -1131,13 +1181,14 @@ namespace Internal.Runtime
             }
             if (IsGeneric)
                 cbOffset += (UInt32)IntPtr.Size;
-#endif
 
             if (eField == EETypeField.ETF_DynamicTemplateType)
             {
                 Debug.Assert(IsDynamicType);
                 return cbOffset;
             }
+
+            // after this we have statics information for dynamic types
 
             Debug.Assert(false, "Unknown EEType field type");
             return 0;
@@ -1150,7 +1201,11 @@ namespace Internal.Runtime
             bool fHasFinalizer,
             bool fRequiresOptionalFields,
             bool fRequiresNullableType,
-            bool fHasSealedVirtuals)
+            bool fHasSealedVirtuals,
+            bool fHasGenericInfo,
+            bool fHasNonGcStatics,
+            bool fHasGcStatics,
+            bool fHasThreadStatics)
         {
             // We don't support nullables with sealed virtuals at this time -
             // the issue is that if both the nullable eetype and the sealed virtuals may be present,
@@ -1168,8 +1223,35 @@ namespace Internal.Runtime
                 (fHasFinalizer ? sizeof(UIntPtr) : 0) +
                 (fRequiresOptionalFields ? sizeof(IntPtr) : 0) +
                 (fRequiresNullableType ? sizeof(IntPtr) : 0) +
-                (fHasSealedVirtuals ? sizeof(IntPtr) : 0));
+                (fHasSealedVirtuals ? sizeof(IntPtr) : 0) +
+                (fHasGenericInfo ? sizeof(IntPtr)*2 : 0) + // pointers to GenericDefinition and GenericComposition
+                (fHasNonGcStatics ? sizeof(IntPtr) : 0) + // pointer to data
+                (fHasGcStatics ? sizeof(IntPtr) : 0) +  // pointer to data
+                (fHasThreadStatics ? sizeof(UInt32) : 0)); // tls offset
         }
 #endif
+    }
+
+    // Wrapper around EEType pointers that may be indirected through the IAT if their low bit is set.
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct EETypeRef
+    {
+        private byte* _value;
+
+        public EEType* Value
+        {
+            get
+            {
+                if (((int)_value & 1) == 0)
+                    return (EEType*)_value;
+                return *(EEType**)(_value - 1);
+            }
+#if TYPE_LOADER_IMPLEMENTATION
+            set
+            {
+                _value = (byte*)value;
+            }
+#endif
+        }
     }
 }

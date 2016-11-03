@@ -14,6 +14,7 @@
 
 using System.Runtime;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 // TODO: remove when m_pEEType becomes EETypePtr
 using EEType = Internal.Runtime.EEType;
@@ -74,6 +75,19 @@ namespace System
             // m_numComponents is an int field that is directly after m_pEEType
             fixed (EEType** ptr = &m_pEEType)
                 return *(int*)(ptr + 1);
+        }
+
+        private class RawData
+        {
+// Suppress bogus warning - remove once https://github.com/dotnet/roslyn/issues/10544 is fixed
+#pragma warning disable 649
+            public byte Data;
+#pragma warning restore
+        }
+
+        internal ref byte GetRawData()
+        {
+            return ref Unsafe.As<RawData>(this).Data;
         }
     }
 }

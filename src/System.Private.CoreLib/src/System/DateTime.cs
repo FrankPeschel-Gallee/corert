@@ -2,12 +2,9 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System;
-using System.Threading;
 using System.Globalization;
-using System.Runtime;
 using System.Runtime.InteropServices;
-using System.Runtime.CompilerServices;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 
 namespace System
@@ -84,7 +81,7 @@ namespace System
         internal const long MaxTicks = DaysTo10000 * TicksPerDay - 1;
         private const long MaxMillis = (long)DaysTo10000 * MillisPerDay;
 
-        private const long TicksTo1970 = DaysTo1970 *  TicksPerDay;
+        private const long TicksTo1970 = DaysTo1970 * TicksPerDay;
         private const long FileTimeOffset = DaysTo1601 * TicksPerDay;
         private const long DoubleDateOffset = DaysTo1899 * TicksPerDay;
         // The minimum OA date is 0100/01/01 (Note it's year 100).
@@ -168,7 +165,7 @@ namespace System
             {
                 throw new ArgumentOutOfRangeException("ticks", SR.ArgumentOutOfRange_DateTimeBadTicks);
             }
-            Contract.Requires(kind == DateTimeKind.Local, "Internal Constructor is for local times only");
+            Debug.Assert(kind == DateTimeKind.Local, "Internal Constructor is for local times only");
             Contract.EndContractBlock();
             _dateData = ((UInt64)ticks | (isAmbiguousDst ? KindLocalAmbiguousDst : KindLocal));
         }

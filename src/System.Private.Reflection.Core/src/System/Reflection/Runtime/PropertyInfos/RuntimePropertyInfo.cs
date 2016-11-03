@@ -2,26 +2,25 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Text;
-using global::System.Reflection;
-using global::System.Diagnostics;
-using global::System.Collections.Generic;
-using global::System.Runtime.CompilerServices;
-using global::System.Reflection.Runtime.General;
-using global::System.Reflection.Runtime.TypeInfos;
-using global::System.Reflection.Runtime.MethodInfos;
-using global::System.Reflection.Runtime.ParameterInfos;
-using global::System.Reflection.Runtime.CustomAttributes;
+using System;
+using System.Text;
+using System.Reflection;
+using System.Diagnostics;
+using System.Globalization;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.TypeInfos;
+using System.Reflection.Runtime.MethodInfos;
+using System.Reflection.Runtime.ParameterInfos;
+using System.Reflection.Runtime.CustomAttributes;
 
-using global::Internal.Reflection.Core;
-using global::Internal.Reflection.Core.Execution;
-using global::Internal.Reflection.Core.NonPortable;
-using global::Internal.Reflection.Extensibility;
+using Internal.Reflection.Core;
+using Internal.Reflection.Core.Execution;
 
-using global::Internal.Reflection.Tracing;
+using Internal.Reflection.Tracing;
 
-using global::Internal.Metadata.NativeFormat;
+using Internal.Metadata.NativeFormat;
 
 namespace System.Reflection.Runtime.PropertyInfos
 {
@@ -29,7 +28,7 @@ namespace System.Reflection.Runtime.PropertyInfos
     // The runtime's implementation of PropertyInfo's
     //
     [DebuggerDisplay("{_debugName}")]
-    internal sealed partial class RuntimePropertyInfo : ExtensiblePropertyInfo, ITraceableTypeMember
+    internal sealed partial class RuntimePropertyInfo : PropertyInfo, ITraceableTypeMember
     {
         //
         // propertyHandle - the "tkPropertyDef" that identifies the property.
@@ -94,14 +93,10 @@ namespace System.Reflection.Runtime.PropertyInfos
                     ReflectionTrace.PropertyInfo_CustomAttributes(this);
 #endif
 
-                foreach (CustomAttributeData cad in RuntimeCustomAttributeData.GetCustomAttributes(_definingTypeInfo.ReflectionDomain, _reader, _property.CustomAttributes))
+                foreach (CustomAttributeData cad in RuntimeCustomAttributeData.GetCustomAttributes(_reader, _property.CustomAttributes))
                     yield return cad;
-                ExecutionDomain executionDomain = _definingTypeInfo.ReflectionDomain as ExecutionDomain;
-                if (executionDomain != null)
-                {
-                    foreach (CustomAttributeData cad in executionDomain.ExecutionEnvironment.GetPsuedoCustomAttributes(_reader, _propertyHandle, _definingTypeInfo.TypeDefinitionHandle))
-                        yield return cad;
-                }
+                foreach (CustomAttributeData cad in ReflectionCoreExecution.ExecutionEnvironment.GetPsuedoCustomAttributes(_reader, _propertyHandle, _definingTypeInfo.TypeDefinitionHandle))
+                    yield return cad;
             }
         }
 
@@ -123,11 +118,11 @@ namespace System.Reflection.Runtime.PropertyInfos
             RuntimePropertyInfo other = obj as RuntimePropertyInfo;
             if (other == null)
                 return false;
-            if (!(this._reader == other._reader))
+            if (!(_reader == other._reader))
                 return false;
-            if (!(this._propertyHandle.Equals(other._propertyHandle)))
+            if (!(_propertyHandle.Equals(other._propertyHandle)))
                 return false;
-            if (!(this._contextTypeInfo.Equals(other._contextTypeInfo)))
+            if (!(_contextTypeInfo.Equals(other._contextTypeInfo)))
                 return false;
             return true;
         }
@@ -143,9 +138,6 @@ namespace System.Reflection.Runtime.PropertyInfos
             if (ReflectionTrace.Enabled)
                 ReflectionTrace.PropertyInfo_GetConstantValue(this);
 #endif
-
-            if (!(_definingTypeInfo.ReflectionDomain is ExecutionDomain))
-                throw new NotSupportedException(); // Cannot instantiate a boxed enum on a non-execution domain.
 
             Object defaultValue;
             if (!ReflectionCoreExecution.ExecutionEnvironment.GetDefaultValueIfAny(
@@ -164,15 +156,15 @@ namespace System.Reflection.Runtime.PropertyInfos
         {
             bool useGetter = CanRead;
             RuntimeMethodInfo accessor = (useGetter ? Getter : Setter);
-            RuntimeParameterInfo[] runtimeMethodParameterInfos = accessor.GetRuntimeParametersAndReturn(accessor);
-            int count = runtimeMethodParameterInfos.Length - 1;  // Subtract one for the return parameter.
+            RuntimeParameterInfo[] runtimeMethodParameterInfos = accessor.RuntimeParameters;
+            int count = runtimeMethodParameterInfos.Length;
             if (!useGetter)
                 count--;  // If we're taking the parameters off the setter, subtract one for the "value" parameter.
             if (count == 0)
                 return Array.Empty<ParameterInfo>();
             ParameterInfo[] result = new ParameterInfo[count];
             for (int i = 0; i < count; i++)
-                result[i] = RuntimePropertyIndexParameterInfo.GetRuntimePropertyIndexParameterInfo(this, runtimeMethodParameterInfos[i + 1]);
+                result[i] = RuntimePropertyIndexParameterInfo.GetRuntimePropertyIndexParameterInfo(this, runtimeMethodParameterInfos[i]);
             return result;
         }
 
@@ -189,12 +181,14 @@ namespace System.Reflection.Runtime.PropertyInfos
             }
         }
 
-        public sealed override Object GetValue(Object obj, Object[] index)
+        public sealed override object GetValue(object obj, BindingFlags invokeAttr, Binder binder, object[] index, CultureInfo culture)
         {
 #if ENABLE_REFLECTION_TRACE
             if (ReflectionTrace.Enabled)
                 ReflectionTrace.PropertyInfo_GetValue(this, obj, index);
 #endif
+            if (invokeAttr != BindingFlags.Default || binder != null || culture != null)
+                throw new NotImplementedException();
 
             if (_lazyGetterInvoker == null)
             {
@@ -202,11 +196,19 @@ namespace System.Reflection.Runtime.PropertyInfos
                 if (!GetAccessor(MethodSemanticsAttributes.Getter, out getterMethodHandle))
                     throw new ArgumentException();
                 MethodAttributes getterMethodAttributes = getterMethodHandle.GetMethod(_reader).Flags;
-                _lazyGetterInvoker = ReflectionCoreExecution.ExecutionEnvironment.GetMethodInvoker(_reader, _contextTypeInfo.RuntimeType, getterMethodHandle, Array.Empty<RuntimeType>(), this);
+                _lazyGetterInvoker = ReflectionCoreExecution.ExecutionEnvironment.GetMethodInvoker(_reader, _contextTypeInfo, getterMethodHandle, Array.Empty<RuntimeTypeInfo>(), this);
             }
             if (index == null)
                 index = Array.Empty<Object>();
             return _lazyGetterInvoker.Invoke(obj, index);
+        }
+
+        public sealed override int MetadataToken
+        {
+            get
+            {
+                throw new InvalidOperationException(SR.NoMetadataTokenAvailable);
+            }
         }
 
         public sealed override Module Module
@@ -241,7 +243,7 @@ namespace System.Reflection.Runtime.PropertyInfos
 
                 TypeContext typeContext = _contextTypeInfo.TypeContext;
                 Handle typeHandle = _property.Signature.GetPropertySignature(_reader).Type;
-                return _contextTypeInfo.ReflectionDomain.Resolve(_reader, typeHandle, typeContext);
+                return typeHandle.Resolve(_reader, typeContext);
             }
         }
 
@@ -258,12 +260,14 @@ namespace System.Reflection.Runtime.PropertyInfos
             }
         }
 
-        public sealed override void SetValue(Object obj, Object value, Object[] index)
+        public sealed override void SetValue(object obj, object value, BindingFlags invokeAttr, Binder binder, object[] index, CultureInfo culture)
         {
 #if ENABLE_REFLECTION_TRACE
             if (ReflectionTrace.Enabled)
                 ReflectionTrace.PropertyInfo_SetValue(this, obj, value, index);
 #endif
+            if (invokeAttr != BindingFlags.Default || binder != null || culture != null)
+                throw new NotImplementedException();
 
             if (_lazySetterInvoker == null)
             {
@@ -271,7 +275,7 @@ namespace System.Reflection.Runtime.PropertyInfos
                 if (!GetAccessor(MethodSemanticsAttributes.Setter, out setterMethodHandle))
                     throw new ArgumentException();
                 MethodAttributes setterMethodAttributes = setterMethodHandle.GetMethod(_reader).Flags;
-                _lazySetterInvoker = ReflectionCoreExecution.ExecutionEnvironment.GetMethodInvoker(_reader, _contextTypeInfo.RuntimeType, setterMethodHandle, Array.Empty<RuntimeType>(), this);
+                _lazySetterInvoker = ReflectionCoreExecution.ExecutionEnvironment.GetMethodInvoker(_reader, _contextTypeInfo, setterMethodHandle, Array.Empty<RuntimeTypeInfo>(), this);
             }
             Object[] arguments;
             if (index == null)
@@ -294,10 +298,9 @@ namespace System.Reflection.Runtime.PropertyInfos
         {
             StringBuilder sb = new StringBuilder(30);
 
-            ReflectionDomain reflectionDomain = _contextTypeInfo.ReflectionDomain;
             TypeContext typeContext = _contextTypeInfo.TypeContext;
             Handle typeHandle = _property.Signature.GetPropertySignature(_reader).Type;
-            sb.Append(typeHandle.FormatTypeName(_reader, typeContext, reflectionDomain));
+            sb.Append(typeHandle.FormatTypeName(_reader, typeContext));
             sb.Append(' ');
             sb.Append(this.Name);
             ParameterInfo[] indexParameters = this.GetIndexParameters();
@@ -307,7 +310,7 @@ namespace System.Reflection.Runtime.PropertyInfos
                 for (int i = 0; i < indexParameters.Length; i++)
                     indexRuntimeParameters[i] = (RuntimeParameterInfo)(indexParameters[i]);
                 sb.Append(" [");
-                sb.Append(RuntimeMethodCommon.ComputeParametersString(indexRuntimeParameters, 0));
+                sb.Append(RuntimeMethodCommon.ComputeParametersString(indexRuntimeParameters));
                 sb.Append(']');
             }
 
@@ -388,12 +391,12 @@ namespace System.Reflection.Runtime.PropertyInfos
             return this;
         }
 
-        private RuntimeNamedTypeInfo _definingTypeInfo;
-        private PropertyHandle _propertyHandle;
-        private RuntimeTypeInfo _contextTypeInfo;
+        private readonly RuntimeNamedTypeInfo _definingTypeInfo;
+        private readonly PropertyHandle _propertyHandle;
+        private readonly RuntimeTypeInfo _contextTypeInfo;
 
-        private MetadataReader _reader;
-        private Property _property;
+        private readonly MetadataReader _reader;
+        private readonly Property _property;
 
         private volatile MethodInvoker _lazyGetterInvoker = null;
         private volatile MethodInvoker _lazySetterInvoker = null;

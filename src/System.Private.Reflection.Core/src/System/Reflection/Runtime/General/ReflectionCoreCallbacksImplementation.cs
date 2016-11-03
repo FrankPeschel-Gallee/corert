@@ -2,21 +2,20 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Reflection;
-using global::System.Diagnostics;
-using global::System.Collections.Generic;
-using global::System.Reflection.Runtime.General;
-using global::System.Reflection.Runtime.TypeInfos;
-using global::System.Reflection.Runtime.Assemblies;
-using global::System.Reflection.Runtime.FieldInfos;
-using global::System.Reflection.Runtime.MethodInfos;
+using System;
+using System.Reflection;
+using System.Diagnostics;
+using System.Collections.Generic;
+using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.TypeInfos;
+using System.Reflection.Runtime.Assemblies;
+using System.Reflection.Runtime.FieldInfos;
+using System.Reflection.Runtime.MethodInfos;
+using System.Reflection.Runtime.BindingFlagSupport;
 
-using global::Internal.Reflection.Augments;
-using global::Internal.Reflection.Core.Execution;
-using global::Internal.Reflection.Core.NonPortable;
-
-using global::Internal.Metadata.NativeFormat;
+using Internal.Reflection.Augments;
+using Internal.Reflection.Core.Execution;
+using Internal.Metadata.NativeFormat;
 
 namespace System.Reflection.Runtime.General
 {
@@ -26,23 +25,11 @@ namespace System.Reflection.Runtime.General
         {
         }
 
-        public sealed override TypeInfo GetTypeInfo(Type type)
-        {
-            RuntimeType runtimeType = type as RuntimeType;
-            if (runtimeType != null)
-                return runtimeType.GetRuntimeTypeInfo();
-            IReflectableType reflectableType = type as IReflectableType;
-            if (reflectableType != null)
-                return reflectableType.GetTypeInfo();
-
-            throw runtimeType.GetReflectionDomain().CreateMissingMetadataException(type);
-        }
-
         public sealed override Assembly Load(AssemblyName refName)
         {
             if (refName == null)
                 throw new ArgumentNullException("assemblyRef");
-            return RuntimeAssembly.GetRuntimeAssembly(ReflectionCoreExecution.ExecutionDomain, refName.ToRuntimeAssemblyName());
+            return RuntimeAssembly.GetRuntimeAssembly(refName.ToRuntimeAssemblyName());
         }
 
         //
@@ -83,8 +70,8 @@ namespace System.Reflection.Runtime.General
                     throw new ArgumentException(SR.Argument_InvalidHandle);
                 if (!actualDeclaringTypeHandle.Equals(declaringTypeHandle))
                     throw new ArgumentException(SR.Format(SR.Argument_ResolveMethodHandle,
-                        ReflectionCoreNonPortable.GetTypeForRuntimeTypeHandle(declaringTypeHandle),
-                        ReflectionCoreNonPortable.GetTypeForRuntimeTypeHandle(actualDeclaringTypeHandle)));
+                        declaringTypeHandle.GetTypeForRuntimeTypeHandle(),
+                        actualDeclaringTypeHandle.GetTypeForRuntimeTypeHandle()));
             }
 
             MethodBase methodBase = ReflectionCoreExecution.ExecutionDomain.GetMethod(declaringTypeHandle, methodHandle, genericMethodTypeArgumentHandles);
@@ -126,8 +113,8 @@ namespace System.Reflection.Runtime.General
                     throw new ArgumentException(SR.Argument_InvalidHandle);
                 if (!actualDeclaringTypeHandle.Equals(declaringTypeHandle))
                     throw new ArgumentException(SR.Format(SR.Argument_ResolveFieldHandle,
-                        ReflectionCoreNonPortable.GetTypeForRuntimeTypeHandle(declaringTypeHandle),
-                        ReflectionCoreNonPortable.GetTypeForRuntimeTypeHandle(actualDeclaringTypeHandle)));
+                        declaringTypeHandle.GetTypeForRuntimeTypeHandle(),
+                        actualDeclaringTypeHandle.GetTypeForRuntimeTypeHandle()));
             }
 
             FieldInfo fieldInfo = GetFieldInfo(declaringTypeHandle, fieldHandle);
@@ -150,10 +137,29 @@ namespace System.Reflection.Runtime.General
             return AssemblyNameHelpers.ComputePublicKeyToken(publicKey);
         }
 
+        public sealed override EventInfo GetImplicitlyOverriddenBaseClassEvent(EventInfo e)
+        {
+            return e.GetImplicitlyOverriddenBaseClassMember();
+        }
+
+        public sealed override MethodInfo GetImplicitlyOverriddenBaseClassMethod(MethodInfo m)
+        {
+            return m.GetImplicitlyOverriddenBaseClassMember();
+        }
+
+        public sealed override PropertyInfo GetImplicitlyOverriddenBaseClassProperty(PropertyInfo p)
+        {
+            return p.GetImplicitlyOverriddenBaseClassMember();
+        }
+
+        public sealed override Binder CreateDefaultBinder()
+        {
+            return new DefaultBinder();
+        }
+
         private FieldInfo GetFieldInfo(RuntimeTypeHandle declaringTypeHandle, FieldHandle fieldHandle)
         {
-            RuntimeType declaringType = ReflectionCoreNonPortable.GetTypeForRuntimeTypeHandle(declaringTypeHandle);
-            RuntimeTypeInfo contextTypeInfo = declaringType.GetRuntimeTypeInfo();
+            RuntimeTypeInfo contextTypeInfo = declaringTypeHandle.GetTypeForRuntimeTypeHandle();
             RuntimeNamedTypeInfo definingTypeInfo = contextTypeInfo.AnchoringTypeDefinitionForDeclaredMembers;
             MetadataReader reader = definingTypeInfo.Reader;
             return RuntimeFieldInfo.GetRuntimeFieldInfo(fieldHandle, definingTypeInfo, contextTypeInfo);

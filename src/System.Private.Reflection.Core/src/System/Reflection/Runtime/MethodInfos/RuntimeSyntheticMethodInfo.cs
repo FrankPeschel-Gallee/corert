@@ -2,18 +2,17 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using global::System;
-using global::System.Reflection;
-using global::System.Diagnostics;
-using global::System.Collections.Generic;
-using global::System.Reflection.Runtime.General;
-using global::System.Reflection.Runtime.TypeInfos;
-using global::System.Reflection.Runtime.ParameterInfos;
+using System;
+using System.Reflection;
+using System.Diagnostics;
+using System.Collections.Generic;
+using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.TypeInfos;
+using System.Reflection.Runtime.ParameterInfos;
 
-using global::Internal.Reflection.Core.Execution;
-using global::Internal.Reflection.Core.NonPortable;
+using Internal.Reflection.Core.Execution;
 
-using global::Internal.Metadata.NativeFormat;
+using Internal.Metadata.NativeFormat;
 
 namespace System.Reflection.Runtime.MethodInfos
 {
@@ -22,14 +21,15 @@ namespace System.Reflection.Runtime.MethodInfos
     //
     internal sealed partial class RuntimeSyntheticMethodInfo : RuntimeMethodInfo
     {
-        private RuntimeSyntheticMethodInfo(SyntheticMethodId syntheticMethodId, String name, RuntimeType declaringType, RuntimeType[] runtimeParameterTypesAndReturn, InvokerOptions options, Func<Object, Object[], Object> invoker)
+        private RuntimeSyntheticMethodInfo(SyntheticMethodId syntheticMethodId, String name, RuntimeTypeInfo declaringType, RuntimeTypeInfo[] parameterTypes, RuntimeTypeInfo returnType, InvokerOptions options, Func<Object, Object[], Object> invoker)
         {
             _syntheticMethodId = syntheticMethodId;
             _name = name;
             _declaringType = declaringType;
             _options = options;
             _invoker = invoker;
-            _runtimeParameterTypesAndReturn = runtimeParameterTypesAndReturn;
+            _runtimeParameterTypes = parameterTypes;
+            _returnType = returnType;
         }
 
         public sealed override MethodAttributes Attributes
@@ -61,9 +61,9 @@ namespace System.Reflection.Runtime.MethodInfos
             RuntimeSyntheticMethodInfo other = obj as RuntimeSyntheticMethodInfo;
             if (other == null)
                 return false;
-            if (this._syntheticMethodId != other._syntheticMethodId)
+            if (_syntheticMethodId != other._syntheticMethodId)
                 return false;
-            if (!(this._declaringType.Equals(other._declaringType)))
+            if (!(_declaringType.Equals(other._declaringType)))
                 return false;
             return true;
         }
@@ -75,7 +75,7 @@ namespace System.Reflection.Runtime.MethodInfos
 
         public sealed override int GetHashCode()
         {
-            return this._declaringType.GetHashCode();
+            return _declaringType.GetHashCode();
         }
 
         public sealed override bool IsGenericMethod
@@ -117,16 +117,17 @@ namespace System.Reflection.Runtime.MethodInfos
 
         public sealed override String ToString()
         {
-            return RuntimeMethodCommon.ComputeToString(this, Array.Empty<RuntimeType>(), GetRuntimeParametersAndReturn(this));
+            return RuntimeMethodCommon.ComputeToString(this, Array.Empty<RuntimeTypeInfo>(), RuntimeParameters, RuntimeReturnParameter);
         }
 
         protected sealed override MethodInvoker UncachedMethodInvoker
         {
             get
             {
-                RuntimeTypeHandle[] runtimeParameterTypeHandles = new RuntimeTypeHandle[_runtimeParameterTypesAndReturn.Length - 1];
-                for (int i = 1; i < _runtimeParameterTypesAndReturn.Length; i++)
-                    runtimeParameterTypeHandles[i - 1] = _runtimeParameterTypesAndReturn[i].TypeHandle;
+                RuntimeTypeInfo[] runtimeParameterTypes = _runtimeParameterTypes;
+                RuntimeTypeHandle[] runtimeParameterTypeHandles = new RuntimeTypeHandle[runtimeParameterTypes.Length];
+                for (int i = 0; i < runtimeParameterTypes.Length; i++)
+                    runtimeParameterTypeHandles[i] = runtimeParameterTypes[i].TypeHandle;
                 return ReflectionCoreExecution.ExecutionEnvironment.GetSyntheticMethodInvoker(
                     _declaringType.TypeHandle,
                     runtimeParameterTypeHandles,
@@ -135,15 +136,15 @@ namespace System.Reflection.Runtime.MethodInfos
             }
         }
 
-        internal sealed override RuntimeType[] RuntimeGenericArgumentsOrParameters
+        internal sealed override RuntimeTypeInfo[] RuntimeGenericArgumentsOrParameters
         {
             get
             {
-                return Array.Empty<RuntimeType>();
+                return Array.Empty<RuntimeTypeInfo>();
             }
         }
 
-        internal sealed override RuntimeType RuntimeDeclaringType
+        internal sealed override RuntimeTypeInfo RuntimeDeclaringType
         {
             get
             {
@@ -159,28 +160,24 @@ namespace System.Reflection.Runtime.MethodInfos
             }
         }
 
-        internal sealed override RuntimeParameterInfo[] GetRuntimeParametersAndReturn(RuntimeMethodInfo contextMethod)
+        internal sealed override RuntimeParameterInfo[] GetRuntimeParameters(RuntimeMethodInfo contextMethod, out RuntimeParameterInfo returnParameter)
         {
-            RuntimeParameterInfo[] runtimeParametersAndReturn = _lazyRuntimeParametersAndReturn;
-            if (runtimeParametersAndReturn == null)
+            RuntimeTypeInfo[] runtimeParameterTypes = _runtimeParameterTypes;
+            RuntimeParameterInfo[] parameters = new RuntimeParameterInfo[runtimeParameterTypes.Length];
+            for (int i = 0; i < parameters.Length; i++)
             {
-                runtimeParametersAndReturn = new RuntimeParameterInfo[_runtimeParameterTypesAndReturn.Length];
-                for (int i = 0; i < runtimeParametersAndReturn.Length; i++)
-                {
-                    runtimeParametersAndReturn[i] = RuntimeSyntheticParameterInfo.GetRuntimeSyntheticParameterInfo(this, i - 1, _runtimeParameterTypesAndReturn[i]);
-                }
-                _lazyRuntimeParametersAndReturn = runtimeParametersAndReturn;
+                parameters[i] = RuntimeSyntheticParameterInfo.GetRuntimeSyntheticParameterInfo(this, i, runtimeParameterTypes[i]);
             }
-            return runtimeParametersAndReturn;
+            returnParameter = RuntimeSyntheticParameterInfo.GetRuntimeSyntheticParameterInfo(this, -1, _returnType);
+            return parameters;
         }
 
-        private volatile RuntimeParameterInfo[] _lazyRuntimeParametersAndReturn;
-
-        private String _name;
-        private SyntheticMethodId _syntheticMethodId;
-        private RuntimeType _declaringType;
-        private RuntimeType[] _runtimeParameterTypesAndReturn;
-        private InvokerOptions _options;
-        private Func<Object, Object[], Object> _invoker;
+        private readonly String _name;
+        private readonly SyntheticMethodId _syntheticMethodId;
+        private readonly RuntimeTypeInfo _declaringType;
+        private readonly RuntimeTypeInfo[] _runtimeParameterTypes;
+        private readonly RuntimeTypeInfo _returnType;
+        private readonly InvokerOptions _options;
+        private readonly Func<Object, Object[], Object> _invoker;
     }
 }

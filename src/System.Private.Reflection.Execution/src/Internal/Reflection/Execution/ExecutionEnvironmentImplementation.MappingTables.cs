@@ -242,6 +242,7 @@ namespace Internal.Reflection.Execution
         /// <param name="typeDefHandle">TypeDef handle for the type</param>
         public unsafe sealed override bool TryGetMetadataForNamedType(RuntimeTypeHandle runtimeTypeHandle, out MetadataReader metadataReader, out TypeDefinitionHandle typeDefHandle)
         {
+            Debug.Assert(!RuntimeAugments.IsGenericType(runtimeTypeHandle));
             return TypeLoaderEnvironment.Instance.TryGetMetadataForNamedType(runtimeTypeHandle, out metadataReader, out typeDefHandle);
         }
 
@@ -365,7 +366,7 @@ namespace Internal.Reflection.Execution
 
             // For non-dynamic arrays try to look up the array type in the ArrayMap blobs;
             // attempt to dynamically create a new one if that doesn't succeeed.
-            return TypeLoaderEnvironment.Instance.TryGetArrayTypeForElementType(elementTypeHandle, out arrayTypeHandle);
+            return TypeLoaderEnvironment.Instance.TryGetArrayTypeForElementType(elementTypeHandle, false, -1, out arrayTypeHandle);
         }
 
         //
@@ -403,58 +404,13 @@ namespace Internal.Reflection.Execution
             {
                 throw new NotSupportedException(SR.NotSupported_OpenType);
             }
+            
+            if ((rank < MDArray.MinRank) || (rank > MDArray.MaxRank))
+            {
+                throw new PlatformNotSupportedException(SR.Format(SR.PlatformNotSupported_NoMultiDims, rank));
+            }
 
-            Debug.Assert(rank > 0);
-#if !CORERT
-            arrayTypeHandle = new RuntimeTypeHandle();
-
-            RuntimeTypeHandle mdArrayTypeHandle;
-            if (!RuntimeAugments.GetMdArrayRankTypeHandleIfSupported(rank, out mdArrayTypeHandle))
-                return false;
-
-            // We can call directly into the type loader, bypassing the constraint validator because we know
-            // MDArrays have no constraints. This also prevents us from hitting a MissingMetadataException
-            // due to MDArray not being metadata enabled.
-            return TypeLoaderEnvironment.Instance.TryGetConstructedGenericTypeForComponents(mdArrayTypeHandle, new RuntimeTypeHandle[] { elementTypeHandle }, out arrayTypeHandle);
-#else
-            // CORERT-TODO: Arrays on CoreRT are different
-            throw new NotImplementedException();
-#endif
-        }
-
-        //
-        // Given a RuntimeTypeHandle for any array type E[,,], return a RuntimeTypeHandle for type E, if the pay-for-play policy denotes E[,,] as browsable. 
-        // It is used to implement Type.GetElementType().
-        //
-        // Preconditions:
-        //      arrayTypeHandle is a valid RuntimeTypeHandle of type array.
-        //
-        // Calling this with rank 1 is not equivalent to calling TryGetArrayTypeElementType()! 
-        //
-        public unsafe sealed override bool TryGetMultiDimArrayTypeElementType(RuntimeTypeHandle arrayTypeHandle, int rank, out RuntimeTypeHandle elementTypeHandle)
-        {
-            Debug.Assert(rank > 0);
-
-#if !CORERT
-            elementTypeHandle = new RuntimeTypeHandle();
-
-            RuntimeTypeHandle expectedMdArrayTypeHandle;
-            if (!RuntimeAugments.GetMdArrayRankTypeHandleIfSupported(rank, out expectedMdArrayTypeHandle))
-                return false;
-            RuntimeTypeHandle actualMdArrayTypeHandle;
-            RuntimeTypeHandle[] elementTypeHandles;
-            if (!TryGetConstructedGenericTypeComponents(arrayTypeHandle, out actualMdArrayTypeHandle, out elementTypeHandles))
-                return false;
-            if (!(actualMdArrayTypeHandle.Equals(expectedMdArrayTypeHandle)))
-                return false;
-            if (elementTypeHandles.Length != 1)
-                return false;
-            elementTypeHandle = elementTypeHandles[0];
-            return true;
-#else
-            // CORERT-TODO: Arrays on CoreRT are different
-            throw new NotImplementedException();
-#endif
+            return TypeLoaderEnvironment.Instance.TryGetArrayTypeForElementType(elementTypeHandle, true, rank, out arrayTypeHandle);
         }
 
         //
@@ -653,7 +609,7 @@ namespace Internal.Reflection.Execution
 
         private IntPtr GetDynamicMethodInvokerThunk(RuntimeTypeHandle[] argHandles, MethodBase methodInfo)
         {
-            ParameterInfo[] parameters = methodInfo.GetParameters();
+            ParameterInfo[] parameters = methodInfo.GetParametersNoCopy();
             // last entry in argHandles is the return type if the type is not typeof(void)
             Debug.Assert(parameters.Length == argHandles.Length || parameters.Length == (argHandles.Length - 1));
 
@@ -914,16 +870,22 @@ namespace Internal.Reflection.Execution
 
             IntPtr resolver = IntPtr.Zero;
             if ((methodInvokeMetadata.InvokeTableFlags & InvokeTableFlags.HasVirtualInvoke) != 0)
+            {
                 resolver = TryGetVirtualResolveData(ModuleList.Instance.GetModuleForMetadataReader(metadataReader),
                     declaringTypeHandle, methodHandle, genericMethodTypeArgumentHandles,
                     ref methodSignatureComparer);
+
+                // Unable to find virtual resolution information, cannot return valid MethodInvokeInfo
+                if (resolver == IntPtr.Zero)
+                    return null;
+            }
 
             var methodInvokeInfo = new MethodInvokeInfo
             {
                 LdFtnResult = methodInvokeMetadata.MethodEntryPoint,
                 DynamicInvokeMethod = dynamicInvokeMethod,
                 DynamicInvokeGenericDictionary = dynamicInvokeMethodGenericDictionary,
-                DefaultValueString = methodInvokeMetadata.DefaultValueString,
+                MethodInfo = methodInfo,
                 VirtualResolveData = resolver,
             };
             return methodInvokeInfo;
@@ -1314,8 +1276,14 @@ namespace Internal.Reflection.Execution
             {
                 FieldAccessor result = TryGetFieldAccessor_Inner(moduleHandle, declaringTypeHandle, fieldTypeHandle, fieldHandle, CanonicalFormKind.Specific);
 
-                if (result == null && RuntimeAugments.IsDynamicType(declaringTypeHandle))
-                    result = TryGetFieldAccessor_Inner(moduleHandle, declaringTypeHandle, fieldTypeHandle, fieldHandle, CanonicalFormKind.Universal);
+                if (result != null)
+                    return result;
+            }
+
+            // If we can't find an specific canonical match, look for a universal match
+            foreach (var moduleHandle in ModuleList.Enumerate(RuntimeAugments.GetModuleFromTypeHandle(declaringTypeHandle)))
+            {
+                FieldAccessor result = TryGetFieldAccessor_Inner(moduleHandle, declaringTypeHandle, fieldTypeHandle, fieldHandle, CanonicalFormKind.Universal);
 
                 if (result != null)
                     return result;
@@ -1339,7 +1307,6 @@ namespace Internal.Reflection.Execution
             CanonicallyEquivalentEntryLocator canonWrapper = new CanonicallyEquivalentEntryLocator(declaringTypeHandle, canonFormKind);
             var lookup = fieldHashtable.Lookup(canonWrapper.LookupHashCode);
 
-            bool isDynamicType = RuntimeAugments.IsDynamicType(declaringTypeHandle);
             string fieldName = null;
 
             NativeParser entryParser;
@@ -1355,7 +1322,7 @@ namespace Internal.Reflection.Execution
 
                 RuntimeTypeHandle entryDeclaringTypeHandle = externalReferences.GetRuntimeTypeHandleFromIndex(entryParser.GetUnsigned());
                 if (!entryDeclaringTypeHandle.Equals(declaringTypeHandle)
-                    && !(isDynamicType && canonWrapper.IsCanonicallyEquivalent(entryDeclaringTypeHandle)))
+                    && !(canonWrapper.IsCanonicallyEquivalent(entryDeclaringTypeHandle)))
                     continue;
 
                 if (entryFlags.HasFlag(FieldTableFlags.HasMetadataHandle))
@@ -1429,7 +1396,44 @@ namespace Internal.Reflection.Execution
                         }
 
                     case FieldTableFlags.ThreadStatic:
-                        if (canonFormKind == CanonicalFormKind.Universal)
+                        bool useFieldOffsetAccessor = false;
+                        IntPtr fieldAddressCookie = IntPtr.Zero;
+
+                        if (canonFormKind != CanonicalFormKind.Universal)
+                        {
+                            fieldAddressCookie = RvaToNonGenericStaticFieldAddress(mappingTableModule, fieldOffset);
+                        }
+
+                        if (!entryDeclaringTypeHandle.Equals(declaringTypeHandle))
+                        {
+                            // In this case we didn't find an exact match, but we did find a canonically equivalent match
+                            // We might be in the dynamic type case, or the canonically equivalent, but not the same case.
+
+                            if (RuntimeAugments.IsDynamicType(declaringTypeHandle))
+                            {
+                                if (canonFormKind == CanonicalFormKind.Universal)
+                                {
+                                    // If the declaring type is dynamic, and we found a universal canon match, we should use the universal canon path as fieldOffset will be meaningful
+                                    useFieldOffsetAccessor = true;
+                                }
+                                else
+                                {
+                                    // We can use the non-universal path, as the fieldAddressCookie has two fields (field offset, and type offset), and for dynamic types, the type offset is ignored
+                                    useFieldOffsetAccessor = false;
+                                }
+                            }
+                            else
+                            {
+                                // We're working with a statically generated type, but we didn't find an exact match in the tables
+                                if (canonFormKind != CanonicalFormKind.Universal)
+                                    fieldOffset = checked((int)TypeLoaderEnvironment.GetThreadStaticTypeOffsetFromThreadStaticCookie(fieldAddressCookie));
+
+                                fieldAddressCookie = TypeLoaderEnvironment.Instance.TryGetThreadStaticFieldOffsetCookieForTypeAndFieldOffset(declaringTypeHandle, checked((uint)fieldOffset));
+                                useFieldOffsetAccessor = false;
+                            }
+                        }
+
+                        if (useFieldOffsetAccessor)
                         {
                             return RuntimeAugments.IsValueType(fieldTypeHandle) ?
                                 (FieldAccessor)new ValueTypeFieldAccessorForUniversalThreadStaticFields(TryGetStaticClassConstructionContext(declaringTypeHandle), declaringTypeHandle, fieldOffset, fieldTypeHandle) :
@@ -1437,8 +1441,6 @@ namespace Internal.Reflection.Execution
                         }
                         else
                         {
-                            IntPtr fieldAddressCookie = RvaToNonGenericStaticFieldAddress(mappingTableModule, fieldOffset);
-
                             return RuntimeAugments.IsValueType(fieldTypeHandle) ?
                                 (FieldAccessor)new ValueTypeFieldAccessorForThreadStaticFields(TryGetStaticClassConstructionContext(declaringTypeHandle), declaringTypeHandle, fieldAddressCookie, fieldTypeHandle) :
                                 (FieldAccessor)new ReferenceTypeFieldAccessorForThreadStaticFields(TryGetStaticClassConstructionContext(declaringTypeHandle), declaringTypeHandle, fieldAddressCookie, fieldTypeHandle);
@@ -1601,7 +1603,7 @@ namespace Internal.Reflection.Execution
             {
                 get
                 {
-                    ParameterInfo[] parameters = _methodBase.GetParameters();
+                    ParameterInfo[] parameters = _methodBase.GetParametersNoCopy();
                     LowLevelList<RuntimeTypeHandle> result = new LowLevelList<RuntimeTypeHandle>(parameters.Length);
 
                     for (int i = 0; i < parameters.Length; i++)
@@ -1613,7 +1615,7 @@ namespace Internal.Reflection.Execution
                             result.Add(CommonRuntimeTypes.IntPtr.TypeHandle);
                         else if (parameterType.IsByRef)
                             result.Add(parameterType.GetElementType().TypeHandle);
-                        else if (parameterType.GetTypeInfo().IsEnum)
+                        else if (parameterType.GetTypeInfo().IsEnum && !parameters[i].HasDefaultValue)
                             result.Add(Enum.GetUnderlyingType(parameterType).TypeHandle);
                         else
                             result.Add(parameterType.TypeHandle);
@@ -1641,7 +1643,7 @@ namespace Internal.Reflection.Execution
             {
                 get
                 {
-                    ParameterInfo[] parameters = _methodBase.GetParameters();
+                    ParameterInfo[] parameters = _methodBase.GetParametersNoCopy();
                     bool[] result = new bool[parameters.Length + 1];
 
                     MethodInfo reflectionMethodInfo = _methodBase as MethodInfo;
@@ -1677,22 +1679,22 @@ namespace Internal.Reflection.Execution
                 {
                     Debug.Assert(_metadataReader != null && !_methodHandle.Equals(default(MethodHandle)));
 
-                    _returnTypeAndParametersHandlesCache = new Handle[_methodBase.GetParameters().Length + 1];
-                    _returnTypeAndParametersTypesCache = new Type[_methodBase.GetParameters().Length + 1];
+                    _returnTypeAndParametersHandlesCache = new Handle[_methodBase.GetParametersNoCopy().Length + 1];
+                    _returnTypeAndParametersTypesCache = new Type[_methodBase.GetParametersNoCopy().Length + 1];
 
                     MethodSignature signature = _methodHandle.GetMethod(_metadataReader).Signature.GetMethodSignature(_metadataReader);
 
                     // Check the return type for generic vars
                     MethodInfo reflectionMethodInfo = _methodBase as MethodInfo;
                     _returnTypeAndParametersTypesCache[0] = reflectionMethodInfo != null ? reflectionMethodInfo.ReturnType : CommonRuntimeTypes.Void;
-                    _returnTypeAndParametersHandlesCache[0] = signature.ReturnType.GetReturnTypeSignature(_metadataReader).Type;
+                    _returnTypeAndParametersHandlesCache[0] = signature.ReturnType;
 
                     // Check the method parameters for generic vars
                     int index = 1;
-                    foreach (ParameterTypeSignatureHandle paramHandle in signature.Parameters)
+                    foreach (Handle paramSigHandle in signature.Parameters)
                     {
-                        _returnTypeAndParametersHandlesCache[index] = paramHandle.GetParameterTypeSignature(_metadataReader).Type;
-                        _returnTypeAndParametersTypesCache[index] = _methodBase.GetParameters()[index - 1].ParameterType;
+                        _returnTypeAndParametersHandlesCache[index] = paramSigHandle;
+                        _returnTypeAndParametersTypesCache[index] = _methodBase.GetParametersNoCopy()[index - 1].ParameterType;
                         index++;
                     }
                 }

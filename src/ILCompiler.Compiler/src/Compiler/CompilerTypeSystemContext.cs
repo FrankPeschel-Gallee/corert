@@ -17,7 +17,7 @@ using Internal.IL;
 
 namespace ILCompiler
 {
-    public class CompilerTypeSystemContext : MetadataTypeSystemContext, IMetadataStringDecoderProvider
+    public partial class CompilerTypeSystemContext : MetadataTypeSystemContext, IMetadataStringDecoderProvider
     {
         private MetadataFieldLayoutAlgorithm _metadataFieldLayoutAlgorithm = new CompilerMetadataFieldLayoutAlgorithm();
         private MetadataRuntimeInterfacesAlgorithm _metadataRuntimeInterfacesAlgorithm = new MetadataRuntimeInterfacesAlgorithm();
@@ -320,6 +320,17 @@ namespace ILCompiler
             if (_metadataStringDecoder == null)
                 _metadataStringDecoder = new CachingMetadataStringDecoder(0x10000); // TODO: Tune the size
             return _metadataStringDecoder;
+        }
+
+        protected override bool ComputeHasGCStaticBase(FieldDesc field)
+        {
+            Debug.Assert(field.IsStatic);
+
+            TypeDesc fieldType = field.FieldType;
+            if (fieldType.IsValueType)
+                return ((DefType)fieldType).ContainsGCPointers;
+            else
+                return fieldType.IsGCPointer;
         }
 
         //

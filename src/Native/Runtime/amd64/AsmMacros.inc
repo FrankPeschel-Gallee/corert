@@ -355,17 +355,8 @@ PTFF_RAX_IS_BYREF       equ 00020000h   ;; iff PTFF_SAVE_RAX: set -> eax is ByRe
 
 
 ;;
-;; Offset from FP (rbp) where the managed callout thunk (ManagedCallout2 and possibly others in the future)
-;; store a pointer to a transition frame.
-;;
-MANAGED_CALLOUT_THUNK_TRANSITION_FRAME_POINTER_OFFSET equ -8
-
-
-;;
 ;; CONSTANTS -- SYMBOLS
 ;;
-
-PALDEBUGBREAK                               equ ?PalDebugBreak@@YAXXZ
 
 ifdef FEATURE_GC_STRESS
 REDHAWKGCINTERFACE__STRESSGC                equ ?StressGc@RedhawkGCInterface@@SAXXZ
@@ -378,7 +369,7 @@ endif ;; FEATURE_GC_STRESS
 
 EXTERN RhpGcAlloc                               : PROC
 EXTERN RhpValidateExInfoPop                     : PROC
-EXTERN PALDEBUGBREAK                            : PROC
+EXTERN RhDebugBreak                             : PROC
 EXTERN RhpWaitForSuspend2                       : PROC
 EXTERN RhpWaitForGC2                            : PROC
 EXTERN RhpReversePInvokeAttachOrTrapThread2     : PROC

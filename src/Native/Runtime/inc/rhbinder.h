@@ -58,7 +58,7 @@ struct ModuleHeader
 
     enum ModuleHeaderConstants : UInt32
     {
-        CURRENT_VERSION             = 1,            // Version of the module header protocol. Increment on
+        CURRENT_VERSION             = 3,            // Version of the module header protocol. Increment on
                                                     // breaking changes
         DELTA_SHORTCUT_TABLE_SIZE   = 16,
         MAX_REGIONS                 = 8,            // Max number of regions described by the Regions array
@@ -83,7 +83,6 @@ struct ModuleHeader
     UInt32  RraStaticsGCDataSection;    // RRA to region containing GC statics
     UInt32  RraStaticsGCInfo;           // RRA to GC info for module statics (an array of StaticGcDesc structs)
     UInt32  RraThreadStaticsGCInfo;     // RRA to GC info for module thread statics (an array of StaticGcDesc structs)
-    UInt32  RraGidsWithGcRootsList;     // RRA to head of list of GenericInstanceDescs which report GC roots
 #ifdef FEATURE_CACHED_INTERFACE_DISPATCH
     UInt32  RraInterfaceDispatchCells;  // RRA to array of cache data structures used to dispatch interface calls
     UInt32  CountInterfaceDispatchCells;// Number of elements in above array
@@ -95,12 +94,6 @@ struct ModuleHeader
     UInt32  RraSystemObjectEEType;      // RRA to the IAT entry for the classlib's System.Object EEType. Zero if this is the classlib itself.
     UInt32  RraUnwindInfoBlob;          // RRA to blob used for unwind infos that are referenced by the method GC info
     UInt32  RraCallsiteInfoBlob;        // RRA to blob used for callsite GC root strings that are referenced by the method GC info
-    UInt32  RraGenericInstances;        // RRA to the list of regular generic instances contained in the module
-    UInt32  CountGenericInstances;      // count of generic instances in the above list
-    UInt32  RraGcRootGenericInstances;  // RRA to the list of generic instances with GC roots to report contained in the module
-    UInt32  CountGcRootGenericInstances;// count of generic instances in the above list
-    UInt32  RraVariantGenericInstances; // RRA to the list of generic instances with variant type parameters contained in the module
-    UInt32  CountVariantGenericInstances; // count of generic instances in the above list
     UInt32  SizeStubCode;               // size, in bytes, of stub code at the end of the TEXT_REGION. See ZapImage::SaveModuleHeader for details.
     UInt32  RraReadOnlyBlobs;           // RRA to list of read-only opaque data blobs
     UInt32  SizeReadOnlyBlobs;          // size, in bytes, of the read-only data blobs above
@@ -140,6 +133,12 @@ struct ModuleHeader
     UInt32          CountCustomImportDescriptors;    // count of entries in the above array
 #endif // FEATURE_CUSTOM_IMPORTS
 
+    UInt32          RraGenericUnificationDescs;
+    UInt32          CountOfGenericUnificationDescs;
+
+    UInt32          RraGenericUnificationIndirCells;
+    UInt32          CountOfGenericUnificationIndirCells;
+
     // Macro to generate an inline accessor for RRA-based fields.
 #ifdef RHDUMP
 #define DEFINE_GET_ACCESSOR(_field, _region)\
@@ -164,7 +163,6 @@ struct ModuleHeader
     DEFINE_GET_ACCESSOR(CodeMapInfo,                RDATA_REGION);
     DEFINE_GET_ACCESSOR(StaticsGCInfo,              RDATA_REGION);
     DEFINE_GET_ACCESSOR(ThreadStaticsGCInfo,        RDATA_REGION);
-    DEFINE_GET_ACCESSOR_RO_OR_RW_DATA(GidsWithGcRootsList);
     DEFINE_GET_ACCESSOR(EHInfo,                     RDATA_REGION);
     DEFINE_GET_ACCESSOR(UnwindInfoBlob,             RDATA_REGION);
     DEFINE_GET_ACCESSOR(CallsiteInfoBlob,           RDATA_REGION);
@@ -174,9 +172,6 @@ struct ModuleHeader
     DEFINE_GET_ACCESSOR(InterfaceDispatchCells,     DATA_REGION);
 #endif
     DEFINE_GET_ACCESSOR(FrozenObjects,             DATA_REGION);
-    DEFINE_GET_ACCESSOR_RO_OR_RW_DATA(GenericInstances);
-    DEFINE_GET_ACCESSOR_RO_OR_RW_DATA(GcRootGenericInstances);
-    DEFINE_GET_ACCESSOR_RO_OR_RW_DATA(VariantGenericInstances);
 
     DEFINE_GET_ACCESSOR(LoopIndirCells,             DATA_REGION);
     DEFINE_GET_ACCESSOR(LoopIndirCellChunkBitmap,   DATA_REGION);
@@ -196,6 +191,9 @@ struct ModuleHeader
 #ifdef FEATURE_CUSTOM_IMPORTS
     DEFINE_GET_ACCESSOR(CustomImportDescriptors,    RDATA_REGION);
 #endif // FEATURE_CUSTOM_IMPORTS
+
+    DEFINE_GET_ACCESSOR(GenericUnificationDescs,    RDATA_REGION);
+    DEFINE_GET_ACCESSOR(GenericUnificationIndirCells,DATA_REGION);
 
 #ifndef RHDUMP
     // Macro to generate an inline accessor for well known methods (these are all TEXT-based RRAs since they
@@ -587,40 +585,6 @@ enum GenericVarianceType : UInt8
     GVT_ArrayCovariant = 0x20,
 };
 
-// The GenericInstanceDesc structure holds additional type information associated with generic EETypes. The
-// amount of data can potentially get quite large but many of the items can be omitted for most types.
-// Therefore, rather than representing the data as a regular C++ struct with fixed fields, we include one
-// fixed field, a bitmask indicating what sort of data is encoded, and then encode only the required data in a
-// packed form.
-//
-// While this is straightforward enough, we have a lot of fields that now all require accessor methods (get
-// offset of value, get value, set value) and the offset calculations, though simple, are messy and easy to
-// get wrong. In light of this we use a script to write the accessor code. See
-// rh\tools\WriteOptionalFieldsCode.pl for the script and rh\src\inc\GenericInstanceDescFields.src for the
-// definitions of the fields that it takes as input.
-
-struct GenericInstanceDesc
-{
-#include "GenericInstanceDescFields.h"
-
-#ifdef DACCESS_COMPILE
-    static UInt32 DacSize(TADDR addr);
-#endif
-
-    UInt32 GetHashCode()
-    {
-        UInt32 hash = 0;
-        const UInt32 HASH_MULT = 1220703125; // 5**13
-        hash ^= (UInt32)dac_cast<TADDR>(this->GetGenericTypeDef().GetValue());
-        for (UInt32 i = 0; i < this->GetArity(); i++)
-        {
-            hash *= HASH_MULT;
-            hash ^= (UInt32)dac_cast<TADDR>(this->GetParameterType(i).GetValue());
-        }
-        return hash;
-    }
-};
-
 // Blobs are opaque data passed from the compiler, through the binder and into the native image. At runtime we
 // provide a simple API to retrieve these blobs (they're keyed by a simple integer ID). Blobs are passed to
 // the binder from the compiler and stored in native images by the binder in a sequential stream, each blob
@@ -677,3 +641,135 @@ struct ThreadStaticFieldOffsets
     UInt32 FieldOffset;                 // Offset of a thread static field from the start of its containing type's TLS fields block
                                         // (in other words, the address of a field is 'TLS block + StartingOffsetInTlsBlock + FieldOffset')
 };
+
+#ifndef RHDUMP
+// as System::__Canon is not exported by the SharedLibrary.dll, it is represented by a special "pointer" for generic unification
+#ifdef BINDER
+static const UIntTarget CANON_EETYPE = 42;
+#else
+static const EEType * CANON_EETYPE = (EEType *)42;
+#endif
+#endif
+
+#ifndef RHDUMP
+// flags describing what a generic unification descriptor (below) describes or contains
+enum GenericUnificationFlags
+{
+    GUF_IS_METHOD       = 0x01,         // GUD represents a method, not a type
+    GUF_EETYPE          = 0x02,         // GUD has an indirection cell for the eetype itself
+    GUF_DICT            = 0x04,         // GUD has an indirection cell for the dictionary
+    GUF_GC_STATICS      = 0x08,         // GUD has 2 indirection cells for the gc statics and their gc desc
+    GUF_NONGC_STATICS   = 0x10,         // GUD has an indirection cell for the non gc statics
+    GUF_THREAD_STATICS  = 0x20,         // GUD has 3 indirection cells for the tls index, the tls offset and the tls gc desc
+    GUF_METHOD_BODIES   = 0x40,         // GUD has indirection cells for method bodies
+    GUF_UNBOXING_STUBS  = 0x80,         // GUD has indirection cells for unboxing/instantiating stubs
+};
+
+class GenericComposition;
+
+// describes a generic type or method for the purpose of generic unification
+struct GenericUnificationDesc
+{
+    UInt32              m_hashCode;                     // hash code of the type or method
+    UInt32              m_flags : 8;                    // GenericUnificationFlags (above)
+    UInt32              m_indirCellCountOrOrdinal : 24; // # indir cells used or method ordinal
+#ifdef BINDER
+    UIntTarget          m_openType;                     // ref to open type
+    UIntTarget          m_genericComposition;           // ref to generic composition
+                                                        // (including type args of the enclosing type)
+#else
+    EETypeRef           m_openType;                     // ref to open type
+    GenericComposition *m_genericComposition;           // ref to generic composition
+                                                        // (including type args of the enclosing type)
+#endif // BINDER
+
+    inline UInt32 GetIndirCellIndex(GenericUnificationFlags flags)
+    {
+#ifdef BINDER
+        assert((m_flags & flags) != 0);
+#endif // BINDER
+        UInt32 indirCellIndex = 0;
+
+        if (flags == GUF_EETYPE)
+            return indirCellIndex;
+        if (m_flags & GUF_EETYPE)
+            indirCellIndex += 1;
+
+        if (flags == GUF_DICT)
+            return indirCellIndex;
+        if (m_flags & GUF_DICT)
+            indirCellIndex += 1;
+
+        if (flags == GUF_GC_STATICS)
+            return indirCellIndex;
+        if (m_flags & GUF_GC_STATICS)
+            indirCellIndex += 2;
+
+        if (flags == GUF_NONGC_STATICS)
+            return indirCellIndex;
+        if (m_flags & GUF_NONGC_STATICS)
+            indirCellIndex += 1;
+
+        if (flags == GUF_THREAD_STATICS)
+            return indirCellIndex;
+        if (m_flags & GUF_THREAD_STATICS)
+            indirCellIndex += 3;
+
+        if (flags == GUF_METHOD_BODIES)
+            return indirCellIndex;
+
+#ifdef BINDER
+        // not legal to have unboxing stubs without method bodies
+        assert((m_flags & (GUF_METHOD_BODIES| GUF_UNBOXING_STUBS)) == (GUF_METHOD_BODIES | GUF_UNBOXING_STUBS));
+#endif // BINDER
+        if (flags & GUF_UNBOXING_STUBS)
+        {
+            // the remainining indirection cells should be for method bodies and instantiating/unboxing stubs
+            // where each method has an associated instantiating/unboxing stub
+            UInt32 remainingIndirCellCount = m_indirCellCountOrOrdinal - indirCellIndex;
+            // thus the number of remaining indirection cells should be divisible by 2
+            assert(remainingIndirCellCount % 2 == 0);
+            // the method bodies come first, followed by the unboxing stubs
+            return indirCellIndex + remainingIndirCellCount/2;
+        }
+
+#ifdef BINDER
+        assert(!"bad GUF flag parameter");
+#endif // BINDER
+        return indirCellIndex;
+    }
+
+#ifdef BINDER
+    inline void SetIndirCellCount(UInt32 indirCellCount)
+    {
+        // generic unification descs for methods always have 1 indirection cell
+        assert(!(m_flags & GUF_IS_METHOD));
+        m_indirCellCountOrOrdinal = indirCellCount;
+        assert(m_indirCellCountOrOrdinal == indirCellCount);
+    }
+
+    inline void SetOrdinal(UInt32 ordinal)
+    {
+        assert(m_flags & GUF_IS_METHOD);
+        m_indirCellCountOrOrdinal = ordinal;
+        assert(m_indirCellCountOrOrdinal == ordinal);
+    }
+#endif // !BINDER
+
+    inline UInt32 GetIndirCellCount()
+    {
+        // generic unification descs for methods always have 1 indirection cell
+        return (m_flags & GUF_IS_METHOD) ? 1 : m_indirCellCountOrOrdinal;
+    }
+
+    inline UInt32 GetOrdinal()
+    {
+        // For methods, we need additional identification, for types, we don't
+        // However, we need to make sure no type can match a method, so for
+        // types we return a value that would be never legal for a method
+        return (m_flags & GUF_IS_METHOD) ? m_indirCellCountOrOrdinal : ~0;
+    }
+
+    bool Equals(GenericUnificationDesc *that);
+};
+#endif

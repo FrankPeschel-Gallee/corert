@@ -2,7 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 
 namespace System.Globalization
@@ -24,6 +24,7 @@ namespace System.Globalization
      **      Persian     0001/01/01   9378/10/13
      */
 
+    [Serializable]
     public class PersianCalendar : Calendar
     {
         public static readonly int PersianEra = 1;
@@ -48,24 +49,6 @@ namespace System.Globalization
         internal static DateTime minDate = new DateTime(622, 3, 22);
         internal static DateTime maxDate = DateTime.MaxValue;
 
-        /*=================================GetDefaultInstance==========================
-        **Action: Internal method to provide a default intance of PersianCalendar.  Used by NLS+ implementation
-        **       and other calendars.
-        **Returns:
-        **Arguments:
-        **Exceptions:
-        ============================================================================*/
-        /*
-        internal static Calendar GetDefaultInstance() {
-            if (m_defaultInstance == null) {
-                m_defaultInstance = new PersianCalendar();
-            }
-            return (m_defaultInstance);
-        }
-        */
-
-
-
         public override DateTime MinSupportedDateTime
         {
             get
@@ -73,7 +56,6 @@ namespace System.Globalization
                 return (minDate);
             }
         }
-
 
         public override DateTime MaxSupportedDateTime
         {
@@ -138,7 +120,7 @@ namespace System.Globalization
             throw new ArgumentOutOfRangeException(null, SR.ArgumentOutOfRange_BadYearMonthDay);
         }
 
-        static internal void CheckTicksRange(long ticks)
+        internal static void CheckTicksRange(long ticks)
         {
             if (ticks < minDate.Ticks || ticks > maxDate.Ticks)
             {
@@ -152,7 +134,7 @@ namespace System.Globalization
             }
         }
 
-        static internal void CheckEraRange(int era)
+        internal static void CheckEraRange(int era)
         {
             if (era != CurrentEra && era != PersianEra)
             {
@@ -160,7 +142,7 @@ namespace System.Globalization
             }
         }
 
-        static internal void CheckYearRange(int year, int era)
+        internal static void CheckYearRange(int year, int era)
         {
             CheckEraRange(era);
             if (year < 1 || year > MaxCalendarYear)
@@ -175,7 +157,7 @@ namespace System.Globalization
             }
         }
 
-        static internal void CheckYearMonthRange(int year, int month, int era)
+        internal static void CheckYearMonthRange(int year, int month, int era)
         {
             CheckYearRange(year, era);
             if (year == MaxCalendarYear)
@@ -200,7 +182,7 @@ namespace System.Globalization
 
         private static int MonthFromOrdinalDay(int ordinalDay)
         {
-            Contract.Assert(ordinalDay <= 366);
+            Debug.Assert(ordinalDay <= 366);
             int index = 0;
             while (ordinalDay > DaysToMonth[index])
                 index++;
@@ -210,7 +192,7 @@ namespace System.Globalization
 
         private static int DaysInPreviousMonths(int month)
         {
-            Contract.Assert(1 <= month && month <= 12);
+            Debug.Assert(1 <= month && month <= 12);
             --month; // months are one based but for calculations use 0 based
             return DaysToMonth[month];
         }
@@ -241,7 +223,7 @@ namespace System.Globalization
 
             long yearStart = CalendricalCalculationsHelper.PersianNewYearOnOrBefore(NumDays);
             int y = (int)(Math.Floor(((yearStart - PersianEpoch) / CalendricalCalculationsHelper.MeanTropicalYearInDays) + 0.5)) + 1;
-            Contract.Assert(y >= 1);
+            Debug.Assert(y >= 1);
 
             if (part == DatePartYear)
             {
@@ -260,16 +242,16 @@ namespace System.Globalization
             }
 
             int m = MonthFromOrdinalDay(ordinalDay);
-            Contract.Assert(ordinalDay >= 1);
-            Contract.Assert(m >= 1 && m <= 12);
+            Debug.Assert(ordinalDay >= 1);
+            Debug.Assert(m >= 1 && m <= 12);
             if (part == DatePartMonth)
             {
                 return m;
             }
 
             int d = ordinalDay - DaysInPreviousMonths(m);
-            Contract.Assert(1 <= d);
-            Contract.Assert(d <= 31);
+            Debug.Assert(1 <= d);
+            Debug.Assert(d <= 31);
 
             //
             //  Calculate the Persian Day.
@@ -405,7 +387,7 @@ namespace System.Globalization
             int daysInMonth = DaysToMonth[month] - DaysToMonth[month - 1];
             if ((month == MonthsPerYear) && !IsLeapYear(year))
             {
-                Contract.Assert(daysInMonth == 30);
+                Debug.Assert(daysInMonth == 30);
                 --daysInMonth;
             }
             return daysInMonth;

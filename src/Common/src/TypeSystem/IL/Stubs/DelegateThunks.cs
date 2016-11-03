@@ -222,14 +222,14 @@ namespace Internal.IL.Stubs
             ILLocalVariable delegateToCallLocal = emitter.NewLocal(SystemDelegateType);
 
             ILLocalVariable returnValueLocal = 0;
-            if (Signature.ReturnType.IsSignatureVariable || !Signature.ReturnType.IsVoid)
+            if (!Signature.ReturnType.IsVoid)
             {
                 returnValueLocal = emitter.NewLocal(Signature.ReturnType);
             }
 
             // Fill in delegateArrayLocal
             // Delegate[] delegateArrayLocal = (Delegate[])this.m_helperObject
-            
+
             // ldarg.0 (this pointer)
             // ldfld Delegate.HelperObjectField
             // castclass Delegate[]
@@ -350,9 +350,6 @@ namespace Internal.IL.Stubs
         private DelegateInfo _delegateInfo;
         private MethodSignature _signature;
 
-        private MethodDesc _helperParamIn;
-        private MethodDesc _helperParamRef;
-
         public DelegateDynamicInvokeThunk(DelegateInfo delegateInfo)
         {
             _delegateInfo = delegateInfo;
@@ -423,30 +420,6 @@ namespace Internal.IL.Stubs
             }
         }
 
-        private MethodDesc HelperParamIn
-        {
-            get
-            {
-                if (_helperParamIn == null)
-                {
-                    Interlocked.CompareExchange(ref _helperParamIn, new DynamicInvokeParamHelperMethod(_delegateInfo.Type, 0), null);
-                }
-                return _helperParamIn;
-            }
-        }
-
-        private MethodDesc HelperParamRef
-        {
-            get
-            {
-                if (_helperParamRef == null)
-                {
-                    Interlocked.CompareExchange(ref _helperParamRef, new DynamicInvokeParamHelperMethod(_delegateInfo.Type, 1), null);
-                }
-                return _helperParamRef;
-            }
-        }
-
         public override MethodIL EmitIL()
         {
             ILEmitter emitter = new ILEmitter();
@@ -514,7 +487,7 @@ namespace Internal.IL.Stubs
                     // Everything but pointer types are boxable.
                     localType = ConvertToBoxableType(localType);
                 }
-                
+
                 ILLocalVariable local = emitter.NewLocal(localType.MakeByRefType());
 
                 callSiteSetupStream.EmitLdLoc(local);
@@ -523,11 +496,11 @@ namespace Internal.IL.Stubs
 
                 if (paramType.IsByRef)
                 {
-                    argSetupStream.Emit(ILOpcode.call, emitter.NewToken(HelperParamRef));
+                    argSetupStream.Emit(ILOpcode.call, emitter.NewToken(InvokeUtilsType.GetKnownMethod("DynamicInvokeParamHelperRef", null)));
                 }
                 else
                 {
-                    argSetupStream.Emit(ILOpcode.call, emitter.NewToken(HelperParamIn));
+                    argSetupStream.Emit(ILOpcode.call, emitter.NewToken(InvokeUtilsType.GetKnownMethod("DynamicInvokeParamHelperIn", null)));
 
                     callSiteSetupStream.Emit(ILOpcode.ldobj, emitter.NewToken(paramType));
                 }
@@ -543,7 +516,7 @@ namespace Internal.IL.Stubs
 
             callSiteSetupStream.Emit(ILOpcode.calli, emitter.NewToken(targetMethodSig));
 
-            if (!delegateSignature.ReturnType.IsSignatureVariable && delegateSignature.ReturnType.IsVoid)
+            if (delegateSignature.ReturnType.IsVoid)
             {
                 callSiteSetupStream.Emit(ILOpcode.ldnull);
             }

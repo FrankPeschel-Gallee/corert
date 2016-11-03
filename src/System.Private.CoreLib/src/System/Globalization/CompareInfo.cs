@@ -12,12 +12,7 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Threading;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 
 namespace System.Globalization
@@ -103,7 +98,7 @@ namespace System.Globalization
         {
             get
             {
-                Contract.Assert(_name != null, "CompareInfo.Name Expected m_name to be set");
+                Debug.Assert(_name != null, "CompareInfo.Name Expected _name to be set");
                 if (_name == "zh-CHT" || _name == "zh-CHS")
                 {
                     return _name;
@@ -286,8 +281,8 @@ namespace System.Globalization
         //
         internal static unsafe int CompareOrdinalIgnoreCase(string strA, int indexA, int lengthA, string strB, int indexB, int lengthB)
         {
-            Contract.Assert(indexA + lengthA <= strA.Length);
-            Contract.Assert(indexB + lengthB <= strB.Length);
+            Debug.Assert(indexA + lengthA <= strA.Length);
+            Debug.Assert(indexB + lengthB <= strB.Length);
 
             int length = Math.Min(lengthA, lengthB);
             int range = length;
@@ -347,15 +342,13 @@ namespace System.Globalization
                     SR.ArgumentNull_String);
             }
             Contract.EndContractBlock();
-            int prefixLen = prefix.Length;
-            int sourceLength = source.Length;
 
-            if (prefixLen == 0)
+            if (prefix.Length == 0)
             {
                 return (true);
             }
 
-            if (sourceLength == 0)
+            if (source.Length == 0)
             {
                 return false;
             }
@@ -399,15 +392,13 @@ namespace System.Globalization
                     SR.ArgumentNull_String);
             }
             Contract.EndContractBlock();
-            int suffixLen = suffix.Length;
-            int sourceLength = source.Length;
 
-            if (suffixLen == 0)
+            if (suffix.Length == 0)
             {
                 return (true);
             }
 
-            if (sourceLength == 0)
+            if (source.Length == 0)
             {
                 return false;
             }
@@ -718,7 +709,7 @@ namespace System.Globalization
                 return source.LastIndexOf(value.ToString(), startIndex, count, StringComparison.OrdinalIgnoreCase);
             }
 
-            return LastIndexOfCore(source, new string(value, 1), startIndex, count, options);
+            return LastIndexOfCore(source, value.ToString(), startIndex, count, options);
         }
 
 

@@ -1110,9 +1110,10 @@ extern "C" UInt32_BOOL HeapFree(HANDLE heap, UInt32 flags, void * mem)
 
 typedef UInt32 (__stdcall *HijackCallback)(HANDLE hThread, _In_ PAL_LIMITED_CONTEXT* pThreadContext, _In_opt_ void* pCallbackContext);
 
-REDHAWK_PALEXPORT uint32_t REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ HijackCallback callback, _In_opt_ void* pCallbackContext)
+REDHAWK_PALEXPORT UInt32 REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ HijackCallback callback, _In_opt_ void* pCallbackContext)
 {
-    PORTABILITY_ASSERT("UNIXTODO: Implement this function");
+    // UNIXTODO: Implement PalHijack
+    return E_FAIL;
 }
 
 extern "C" UInt32 WaitForSingleObjectEx(HANDLE handle, UInt32 milliseconds, UInt32_BOOL alertable)
@@ -1254,11 +1255,6 @@ REDHAWK_PALEXPORT Int32 PalGetModuleFileName(_Out_ const TCHAR** pModuleNameOut,
     return strlen(dl.dli_fname);
 }
 
-void PalDebugBreak()
-{
-    __debugbreak();
-}
-
 GCSystemInfo g_SystemInfo;
 
 // Initialize the g_SystemInfo
@@ -1383,39 +1379,18 @@ extern "C" UInt64 PalGetCurrentThreadIdForLogging()
 #endif
 }
 
-extern "C" UInt32_BOOL WriteFile(
-    HANDLE hFile,
-    const void* lpBuffer,
-    uint32_t nNumberOfBytesToWrite,
-    uint32_t * lpNumberOfBytesWritten,
-    void* lpOverlapped)
-{
-    // TODO: Reimplement callers using CRT
-    return UInt32_FALSE;
-}
-
-extern "C" void YieldProcessor()
-{
-}
-
-extern "C" void DebugBreak()
-{
-    PalDebugBreak();
-}
-
-extern "C" uint32_t GetLastError()
-{
-    return 1;
-}
-
-extern "C" UInt32 WaitForMultipleObjectsEx(UInt32, HANDLE *, UInt32_BOOL, UInt32, UInt32_BOOL)
-{
-    PORTABILITY_ASSERT("UNIXTODO: Implement this function");
-}
+static LARGE_INTEGER g_performanceFrequency;
 
 // Initialize the interface implementation
+// Return:
+//  true if it has succeeded, false if it has failed
 bool GCToOSInterface::Initialize()
 {
+    if (!::QueryPerformanceFrequency(&g_performanceFrequency))
+    {
+        return false;
+    }
+
     return true;
 }
 
@@ -1492,8 +1467,7 @@ void GCToOSInterface::Sleep(uint32_t sleepMSec)
 //  switchCount - number of times the YieldThread was called in a loop
 void GCToOSInterface::YieldThread(uint32_t switchCount)
 {
-    // UNIXTODO: handle the switchCount
-    YieldProcessor();
+    PalSwitchToThread();
 }
 
 // Reserve virtual memory range.
@@ -1709,9 +1683,12 @@ uint64_t GCToOSInterface::GetPhysicalMemoryLimit()
     return physical_memory;
 }
 
-// Get global memory status
+// Get memory status
 // Parameters:
-//  ms - pointer to the structure that will be filled in with the memory status
+//  memory_load - A number between 0 and 100 that specifies the approximate percentage of physical memory
+//      that is in use (0 indicates no memory use and 100 indicates full memory use).
+//  available_physical - The amount of physical memory currently available, in bytes.
+//  available_page_file - The maximum amount of memory the current process can commit, in bytes.
 void GCToOSInterface::GetMemoryStatus(uint32_t* memory_load, uint64_t* available_physical, uint64_t* available_page_file)
 {
     if (memory_load != nullptr || available_physical != nullptr)
@@ -1765,7 +1742,6 @@ int64_t GCToOSInterface::QueryPerformanceCounter()
     LARGE_INTEGER ts;
     if (!::QueryPerformanceCounter(&ts))
     {
-        DebugBreak();
         ASSERT_UNCONDITIONALLY("Fatal Error - cannot query performance counter.");
         abort();
     }
@@ -1778,15 +1754,7 @@ int64_t GCToOSInterface::QueryPerformanceCounter()
 //  The counter frequency
 int64_t GCToOSInterface::QueryPerformanceFrequency()
 {
-    LARGE_INTEGER frequency;
-    if (!::QueryPerformanceFrequency(&frequency))
-    {
-        DebugBreak();
-        ASSERT_UNCONDITIONALLY("Fatal Error - cannot query performance counter.");
-        abort();
-    }
-
-    return frequency.QuadPart;
+    return g_performanceFrequency.QuadPart;
 }
 
 // Get a time stamp with a low precision
